@@ -9,6 +9,7 @@ from reseller_mcp.config import Settings
 from reseller_mcp.database_workflows import DatabaseWorkflows
 from reseller_mcp.db import Database
 from reseller_mcp.harness import Harness, HarnessError
+from reseller_mcp.models import Preparation, PreparationState, Risk
 
 
 class RecordingFakeCPanel:
@@ -53,12 +54,24 @@ class FakeCursor:
 
 
 class FakeConnection:
-    def __init__(self, rows: list[dict[str, Any]]) -> None:
-        self.rows = rows
+    def __init__(self, rows: list[dict[str, Any]] | None = None) -> None:
+        self.rows = rows or []
         self.closed = False
+        self.began = False
+        self.committed = False
+        self.rolled_back = False
 
     def cursor(self, *_: Any, **__: Any) -> FakeCursor:
         return FakeCursor(self.rows)
+
+    async def begin(self) -> None:
+        self.began = True
+
+    async def commit(self) -> None:
+        self.committed = True
+
+    async def rollback(self) -> None:
+        self.rolled_back = True
 
     def close(self) -> None:
         self.closed = True
@@ -122,3 +135,92 @@ async def test_query_readonly_requires_account(settings: Settings, db: Database)
     with pytest.raises(HarnessError) as exc:
         await workflows.query_readonly(None, {"database": "acctalpha_app", "sql": "SELECT 1"})
     assert exc.value.code == "ACCOUNT_REQUIRED"
+
+
+def _make_preparation(
+    account: str, arguments: dict[str, Any], before_state: dict[str, Any] | None
+) -> Preparation:
+    from datetime import UTC, datetime, timedelta
+
+    now = datetime.now(UTC)
+    return Preparation(
+        id="prep-1",
+        principal_user_id="admin-id",
+        client_id="test",
+        capability_id="database.transaction_execute",
+        account=account,
+        arguments=arguments,
+        state=PreparationState.PREPARED,
+        risk=Risk.REVERSIBLE_WRITE,
+        idempotency_key="idem-1",
+        created_at=now,
+        expires_at=now + timedelta(seconds=300),
+        before_state=before_state,
+    )
+
+
+async def test_prepare_transaction_backs_up_and_dry_runs(settings: Settings, db: Database) -> None:
+    cpanel = RecordingFakeCPanel()
+    harness = Harness(settings, db, cpanel)  # type: ignore[arg-type]
+    workflows = DatabaseWorkflows(harness)
+
+    fake_connection = FakeConnection(rows=[{"id": 1, "active": 1}])
+
+    async def fake_connect(**kwargs: Any) -> FakeConnection:
+        return fake_connection
+
+    before_state = await workflows.prepare_transaction(
+        "acctalpha",
+        {
+            "database": "acctalpha_app",
+            "statements": [{"sql": "UPDATE users SET active = %s WHERE id = %s", "params": [0, 1]}],
+        },
+        connect_fn=fake_connect,
+    )
+    assert before_state is not None
+    assert before_state["backup_ref"] is not None
+    stored = db.get_backup(before_state["backup_ref"])
+    assert stored is not None
+    assert stored["payload"][0]["rows"] == [{"id": 1, "active": 1}]
+
+
+async def test_prepare_transaction_rejects_forbidden_statement(
+    settings: Settings, db: Database
+) -> None:
+    cpanel = RecordingFakeCPanel()
+    harness = Harness(settings, db, cpanel)  # type: ignore[arg-type]
+    workflows = DatabaseWorkflows(harness)
+
+    with pytest.raises(HarnessError) as exc:
+        await workflows.prepare_transaction(
+            "acctalpha",
+            {"database": "acctalpha_app", "statements": [{"sql": "DROP TABLE users"}]},
+        )
+    assert exc.value.code == "SQL_FORBIDDEN_STATEMENT"
+
+
+async def test_execute_transaction_commits_and_reports_verified(
+    settings: Settings, db: Database
+) -> None:
+    cpanel = RecordingFakeCPanel()
+    harness = Harness(settings, db, cpanel)  # type: ignore[arg-type]
+    workflows = DatabaseWorkflows(harness)
+
+    fake_connection = FakeConnection(rows=[{"id": 1}])
+
+    async def fake_connect(**kwargs: Any) -> FakeConnection:
+        return fake_connection
+
+    arguments = {
+        "database": "acctalpha_app",
+        "statements": [{"sql": "UPDATE users SET active = %s WHERE id = %s", "params": [0, 1]}],
+    }
+    before_state = await workflows.prepare_transaction(
+        "acctalpha", arguments, connect_fn=fake_connect
+    )
+    preparation = _make_preparation("acctalpha", arguments, before_state)
+
+    result = await workflows.execute_transaction(preparation, connect_fn=fake_connect)
+    assert result["committed"] is True
+    assert fake_connection.committed is True
+    assert result["verified"] is True

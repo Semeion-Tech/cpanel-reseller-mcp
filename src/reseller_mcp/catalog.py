@@ -53,6 +53,7 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
     ),
     "uapi.Fileman.get_file_content": (Risk.SENSITIVE_READ, Role.ADMIN, "reader"),
     "database.query_readonly": (Risk.SENSITIVE_READ, Role.OPERATOR, "operator"),
+    "database.transaction_execute": (Risk.REVERSIBLE_WRITE, Role.OPERATOR, "operator"),
 }
 
 DESTRUCTIVE = re.compile(
@@ -108,6 +109,7 @@ ALIASES = {
     "uapi.SSL.can_ssl_redirect": "ssl https redirecionamento seguro",
     "uapi.Bandwidth.query": "banda tráfego consumo conta domínio",
     "database.query_readonly": "banco dados mysql consulta select leitura",
+    "database.transaction_execute": "banco dados mysql escrever transacao update delete insert",
 }
 
 
@@ -313,6 +315,25 @@ def curated_capabilities() -> list[Capability]:
                     "params": [42],
                 }
             ],
+        },
+        {
+            "id": "database.transaction_execute",
+            "title": "Executar transação no banco de dados",
+            "description": (
+                "Executa uma ou mais instruções UPDATE/DELETE/INSERT parametrizadas em uma "
+                "única transação, com backup das linhas afetadas, dry-run e pós-validação."
+            ),
+            "schema": _schema(
+                {
+                    "database": string,
+                    "statements": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": _schema({"sql": string, "params": {"type": "array"}}, ["sql"]),
+                    },
+                },
+                ["database", "statements"],
+            ),
         },
         {
             "id": "uapi.Fileman.get_file_content",

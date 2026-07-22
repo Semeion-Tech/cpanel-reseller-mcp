@@ -73,6 +73,12 @@ class Harness:
         self._workflow_query_hooks["database.query_readonly"] = (
             self.database.query_readonly
         )
+        self._workflow_prepare_hooks["database.transaction_execute"] = (
+            self.database.prepare_transaction
+        )
+        self._workflow_execute_hooks["database.transaction_execute"] = (
+            self.database.execute_transaction
+        )
         self.metrics = OperationMetrics()
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._background_tasks: set[asyncio.Task[None]] = set()
