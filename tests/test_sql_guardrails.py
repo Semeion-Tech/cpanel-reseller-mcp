@@ -80,3 +80,19 @@ def test_derive_backup_select_for_delete() -> None:
 def test_derive_backup_select_for_insert_is_none() -> None:
     [statement] = require_safe_write_statements(["INSERT INTO audit_log (event) VALUES ('x')"])
     assert derive_backup_select(statement) is None
+
+
+def test_derive_backup_select_for_update_preserves_placeholder() -> None:
+    [statement] = require_safe_write_statements(["UPDATE users SET active = 0 WHERE id = %s"])
+    backup_sql = derive_backup_select(statement)
+    assert backup_sql is not None
+    assert "%s" in backup_sql
+    assert "= 1" not in backup_sql
+
+
+def test_derive_backup_select_for_delete_preserves_placeholder() -> None:
+    [statement] = require_safe_write_statements(["DELETE FROM sessions WHERE user_id = %s"])
+    backup_sql = derive_backup_select(statement)
+    assert backup_sql is not None
+    assert "%s" in backup_sql
+    assert "= 1" not in backup_sql

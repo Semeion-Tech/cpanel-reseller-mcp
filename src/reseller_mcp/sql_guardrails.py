@@ -13,7 +13,7 @@ class SQLGuardrailError(ValueError):
 
 
 def _parse_one(sql: str) -> exp.Expression:
-    normalized_sql = sql.replace("%s", "1").replace("%d", "1").replace("%i", "1")
+    normalized_sql = sql.replace("%s", "?").replace("%d", "?").replace("%i", "?")
     try:
         statements = sqlglot.parse(normalized_sql, dialect="mysql")
     except sqlglot.errors.ParseError as exc:
@@ -52,11 +52,13 @@ def derive_backup_select(statement: exp.Expression) -> str | None:
     if isinstance(statement, exp.Insert):
         return None
     table = statement.this
-    if isinstance(table, exp.Table) is False and hasattr(table, "this"):
+    if not isinstance(table, exp.Table) and hasattr(table, "this"):
         table = table.this
     where = statement.args.get("where")
     select = exp.select("*").from_(table.copy())
     if where is not None:
         condition = where.this if hasattr(where, "this") else where
         select = select.where(condition.copy())
-    return select.sql(dialect="mysql")
+    sql_output = select.sql(dialect="mysql")
+    # Replace ? placeholders back to %s for MySQL driver (pyformat style)
+    return sql_output.replace("?", "%s")
