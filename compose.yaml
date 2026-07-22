@@ -1,0 +1,35 @@
+services:
+  reseller-mcp:
+    image: ${RESELLER_MCP_IMAGE:-cpanel-reseller-mcp:local}
+    build:
+      context: .
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      RESELLER_MCP_HOST: 0.0.0.0
+      RESELLER_MCP_PORT: 8080
+      RESELLER_MCP_DB_PATH: /app/data/reseller-mcp.db
+      RESELLER_MCP_CATALOG_PATH: /app/catalog/live_operations.json
+    ports:
+      - "127.0.0.1:8787:8080"
+    volumes:
+      - reseller_mcp_data:/app/data
+      - ./data:/app/catalog:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/healthz', timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    read_only: true
+    tmpfs:
+      - /tmp:size=32m,mode=1777
+
+volumes:
+  reseller_mcp_data:
