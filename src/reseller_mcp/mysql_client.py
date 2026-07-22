@@ -91,62 +91,66 @@ class MySQLEphemeralSession:
         port = int((server_info or {}).get("port") or 3306)
 
         try:
-            await self.cpanel.call(
-                _internal_capability("add_host"),
-                self.account,
-                {"host": self.settings.mysql_egress_ip},
+            try:
+                await self.cpanel.call(
+                    _internal_capability("add_host"),
+                    self.account,
+                    {"host": self.settings.mysql_egress_ip},
+                )
+                self._host_created = True
+            except CPanelError as exc:
+                if "already exists" not in str(exc).lower():
+                    raise MySQLProvisionError(
+                        f"add_host failed: {exc}", "PROVISION_FAILED"
+                    ) from exc
+
+            # cPanel rejects any username that doesn't already carry the account's required
+            # prefix — it does not auto-prefix a short name. Verified against a real account on
+            # 2026-07-22 (create_user rejected "spike_xxxx", accepted "drumagco_spikexxxx" after
+            # reading the required prefix from get_restrictions).
+            restrictions = await self.cpanel.call(
+                _internal_capability("get_restrictions"), self.account, {}
             )
-            self._host_created = True
-        except CPanelError as exc:
-            if "already" not in str(exc).lower():
-                raise MySQLProvisionError(
-                    f"add_host failed: {exc}", "PROVISION_FAILED"
-                ) from exc
+            prefix = (restrictions or {}).get("prefix") or f"{self.account}_"
+            max_len = int((restrictions or {}).get("max_username_length") or 32)
+            self._username = (prefix + self.username_suffix_factory())[:max_len]
 
-        # cPanel rejects any username that doesn't already carry the account's required
-        # prefix — it does not auto-prefix a short name. Verified against a real account on
-        # 2026-07-22 (create_user rejected "spike_xxxx", accepted "drumagco_spikexxxx" after
-        # reading the required prefix from get_restrictions).
-        restrictions = await self.cpanel.call(
-            _internal_capability("get_restrictions"), self.account, {}
-        )
-        prefix = (restrictions or {}).get("prefix") or f"{self.account}_"
-        max_len = int((restrictions or {}).get("max_username_length") or 32)
-        self._username = (prefix + self.username_suffix_factory())[:max_len]
+            password = secrets.token_urlsafe(24)
+            await self.cpanel.call(
+                _internal_capability("create_user"),
+                self.account,
+                {"name": self._username, "password": password},
+            )
 
-        password = secrets.token_urlsafe(24)
-        await self.cpanel.call(
-            _internal_capability("create_user"),
-            self.account,
-            {"name": self._username, "password": password},
-        )
+            privileges = "SELECT" if self.mode == "read" else "ALL PRIVILEGES"
+            await self.cpanel.call(
+                _internal_capability("set_privileges_on_database"),
+                self.account,
+                {"user": self._username, "database": self.database, "privileges": privileges},
+            )
 
-        privileges = "SELECT" if self.mode == "read" else "ALL PRIVILEGES"
-        await self.cpanel.call(
-            _internal_capability("set_privileges_on_database"),
-            self.account,
-            {"user": self._username, "database": self.database, "privileges": privileges},
-        )
+            self._grant_id = str(uuid.uuid4())
+            self.db.insert_ephemeral_grant(
+                grant_id=self._grant_id,
+                account=self.account,
+                database_name=self.database,
+                mysql_username=self._username,
+                host_entry_created=self._host_created,
+                ttl_seconds=self.settings.database_ephemeral_ttl_seconds,
+            )
 
-        self._grant_id = str(uuid.uuid4())
-        self.db.insert_ephemeral_grant(
-            grant_id=self._grant_id,
-            account=self.account,
-            database_name=self.database,
-            mysql_username=self._username,
-            host_entry_created=self._host_created,
-            ttl_seconds=self.settings.database_ephemeral_ttl_seconds,
-        )
-
-        self._connection = await self.connect_fn(
-            host=host,
-            port=port,
-            user=self._username,
-            password=password,
-            db=self.database,
-            connect_timeout=self.settings.database_connect_timeout_seconds,
-            autocommit=False,
-        )
+            self._connection = await self.connect_fn(
+                host=host,
+                port=port,
+                user=self._username,
+                password=password,
+                db=self.database,
+                connect_timeout=self.settings.database_connect_timeout_seconds,
+                autocommit=False,
+            )
+        except Exception:
+            await self._cleanup()
+            raise
         return self
 
     async def __aexit__(self, exc_type: object, exc: object, tb: object) -> None:
@@ -185,6 +189,22 @@ class MySQLEphemeralSession:
             self.db.delete_ephemeral_grant(self._grant_id)
         # If cleanup was incomplete, the ledger row survives on purpose so the
         # reaper (Task 10) can finish revoking access once upstream recovers.
+        # Last-resort registration: if immediate cleanup failed but we provisioned a user,
+        # create the ledger row so the reaper can find it later (e.g., on __aenter__ failure
+        # before the normal db.insert_ephemeral_grant call).
+        elif (
+            (not user_deleted or not host_deleted)
+            and self._grant_id is None
+            and self._username is not None
+        ):
+            self.db.insert_ephemeral_grant(
+                grant_id=str(uuid.uuid4()),
+                account=self.account,
+                database_name=self.database,
+                mysql_username=self._username,
+                host_entry_created=self._host_created,
+                ttl_seconds=self.settings.database_ephemeral_ttl_seconds,
+            )
 
     async def fetch_all(
         self,

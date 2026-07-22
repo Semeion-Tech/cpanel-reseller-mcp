@@ -263,3 +263,46 @@ async def test_cleanup_failure_row_exists_directly(
     with db.connect() as conn:
         rows = conn.execute("SELECT * FROM mysql_ephemeral_grants").fetchall()
     assert len(rows) == 1
+
+
+async def test_set_privileges_fails_immediate_cleanup_works(
+    settings: Settings, db: Database
+) -> None:
+    class FailingCPanel(FakeCPanel):
+        async def call(
+            self,
+            capability: Any,
+            account: str | None,
+            arguments: dict[str, Any],
+            *,
+            retry_safe: bool = False,
+        ) -> Any:
+            if capability.function == "set_privileges_on_database":
+                raise CPanelError("test error", code="TEST_ERROR")
+            return await super().call(
+                capability, account, arguments, retry_safe=retry_safe
+            )
+
+    cpanel = FailingCPanel()
+    fake_connection = FakeConnection()
+
+    async def fake_connect(**kwargs: Any) -> FakeConnection:
+        return fake_connection
+
+    with pytest.raises(CPanelError):
+        async with MySQLEphemeralSession(
+            cpanel=cpanel,  # type: ignore[arg-type]
+            db=db,
+            settings=settings,
+            account="acctalpha",
+            database="acctalpha_app",
+            mode="read",
+            connect_fn=fake_connect,
+        ):
+            pass
+
+    # Even though set_privileges_on_database failed, delete operations succeeded,
+    # so no orphaned row should remain.
+    with db.connect() as conn:
+        rows = conn.execute("SELECT * FROM mysql_ephemeral_grants").fetchall()
+    assert len(rows) == 0
