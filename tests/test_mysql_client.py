@@ -8,7 +8,7 @@ import pytest
 from reseller_mcp.config import Settings
 from reseller_mcp.cpanel import CPanelError
 from reseller_mcp.db import Database
-from reseller_mcp.mysql_client import MySQLEphemeralSession
+from reseller_mcp.mysql_client import MySQLEphemeralSession, reap_expired_grants
 
 
 class FakeCursor:
@@ -306,3 +306,57 @@ async def test_set_privileges_fails_immediate_cleanup_works(
     with db.connect() as conn:
         rows = conn.execute("SELECT * FROM mysql_ephemeral_grants").fetchall()
     assert len(rows) == 0
+
+
+async def test_reap_expired_grants_revokes_and_removes_ledger_rows(
+    settings: Settings, db: Database
+) -> None:
+    db.insert_ephemeral_grant(
+        grant_id="grant-expired",
+        account="acctalpha",
+        database_name="acctalpha_app",
+        mysql_username="eph_orphan",
+        host_entry_created=True,
+        ttl_seconds=-10,
+    )
+    cpanel = FakeCPanel()
+
+    revoked = await reap_expired_grants(cpanel, db, settings)  # type: ignore[arg-type]
+
+    assert revoked == 1
+    assert db.list_expired_ephemeral_grants() == []
+    function_calls = [call[0] for call in cpanel.calls]
+    assert "delete_user" in function_calls
+    assert "delete_host" in function_calls
+
+
+async def test_reap_expired_grants_keeps_row_on_repeated_failure(
+    settings: Settings, db: Database
+) -> None:
+    db.insert_ephemeral_grant(
+        grant_id="grant-stuck",
+        account="acctalpha",
+        database_name="acctalpha_app",
+        mysql_username="eph_stuck",
+        host_entry_created=False,
+        ttl_seconds=-10,
+    )
+
+    class AlwaysFailingCPanel(FakeCPanel):
+        async def call(
+            self,
+            capability: Any,
+            account: str | None,
+            arguments: dict[str, Any],
+            *,
+            retry_safe: bool = False,
+        ) -> Any:
+            raise CPanelError("still down", code="UPSTREAM_NETWORK_ERROR")
+
+    cpanel = AlwaysFailingCPanel()
+    revoked = await reap_expired_grants(cpanel, db, settings)  # type: ignore[arg-type]
+
+    assert revoked == 0
+    with db.connect() as conn:
+        rows = conn.execute("SELECT * FROM mysql_ephemeral_grants").fetchall()
+    assert len(rows) == 1

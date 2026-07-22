@@ -7,13 +7,13 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import aiomysql  # type: ignore[import-untyped]
 
-from .cpanel import CPanelError
+from .config import Settings
+from .cpanel import CPanelClient, CPanelError
+from .db import Database
 from .models import ApiFamily, Capability, Risk, Role
 
 if TYPE_CHECKING:
-    from .config import Settings
-    from .cpanel import CPanelClient
-    from .db import Database
+    pass
 
 ConnectFn = Callable[..., Awaitable[Any]]
 
@@ -42,6 +42,35 @@ def _internal_capability(function: str) -> Capability:
         curated=False,
         schema_source="internal",
     )
+
+
+async def reap_expired_grants(cpanel: CPanelClient, db: Database, settings: Settings) -> int:
+    revoked = 0
+    for grant in db.list_expired_ephemeral_grants():
+        user_ok = True
+        host_ok = not grant["host_entry_created"]
+        try:
+            await cpanel.call(
+                _internal_capability("delete_user"),
+                grant["account"],
+                {"name": grant["mysql_username"]},
+            )
+        except CPanelError:
+            user_ok = False
+        if grant["host_entry_created"]:
+            try:
+                await cpanel.call(
+                    _internal_capability("delete_host"),
+                    grant["account"],
+                    {"host": settings.mysql_egress_ip},
+                )
+                host_ok = True
+            except CPanelError:
+                host_ok = False
+        if user_ok and host_ok:
+            db.delete_ephemeral_grant(grant["id"])
+            revoked += 1
+    return revoked
 
 
 class MySQLEphemeralSession:
