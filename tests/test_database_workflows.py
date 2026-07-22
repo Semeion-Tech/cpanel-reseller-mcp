@@ -38,7 +38,13 @@ class FakeCursor:
         self.rowcount = len(rows)
 
     async def execute(self, sql: str, params: Any = None) -> None:
-        pass
+        placeholder_count = sql.count("%s")
+        param_list = params or []
+        if len(param_list) != placeholder_count:
+            raise TypeError(
+                f"not all arguments converted during string formatting "
+                f"(expected {placeholder_count}, got {len(param_list)})"
+            )
 
     async def fetchall(self) -> list[dict[str, Any]]:
         return self._rows
@@ -224,3 +230,36 @@ async def test_execute_transaction_commits_and_reports_verified(
     assert result["committed"] is True
     assert fake_connection.committed is True
     assert result["verified"] is True
+
+
+async def test_prepare_transaction_with_multiple_placeholders_uses_where_params_only(
+    settings: Settings, db: Database
+) -> None:
+    cpanel = RecordingFakeCPanel()
+    harness = Harness(settings, db, cpanel)  # type: ignore[arg-type]
+    workflows = DatabaseWorkflows(harness)
+
+    fake_connection = FakeConnection(rows=[{"id": 5, "active": 0}])
+
+    async def fake_connect(**kwargs: Any) -> FakeConnection:
+        return fake_connection
+
+    before_state = await workflows.prepare_transaction(
+        "acctalpha",
+        {
+            "database": "acctalpha_app",
+            "statements": [
+                {
+                    "sql": "UPDATE users SET active = %s, role = %s WHERE id = %s",
+                    "params": [1, "admin", 5],
+                }
+            ],
+        },
+        connect_fn=fake_connect,
+    )
+    assert before_state is not None
+    assert before_state["backup_ref"] is not None
+    stored = db.get_backup(before_state["backup_ref"])
+    assert stored is not None
+    assert stored["payload"][0]["sql"] == "SELECT * FROM users WHERE id = %s"
+    assert stored["payload"][0]["rows"] == [{"id": 5, "active": 0}]

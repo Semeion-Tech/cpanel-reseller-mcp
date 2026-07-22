@@ -87,7 +87,10 @@ class DatabaseWorkflows:
                 backup_sql = derive_backup_select(statement)
                 if backup_sql is None:
                     continue
-                rows = await session.fetch_all(backup_sql, item.get("params") or [])
+                placeholder_count = backup_sql.count("%s")
+                all_params = item.get("params") or []
+                backup_params = all_params[-placeholder_count:] if placeholder_count > 0 else []
+                rows = await session.fetch_all(backup_sql, backup_params)
                 backups.append({"statement_index": index, "sql": backup_sql, "rows": rows})
             try:
                 dry_run_rows = await session.run_transaction(
