@@ -116,3 +116,27 @@ def test_parse_one_preserves_percent_placeholder_in_string_literal() -> None:
     # sqlglot may normalize quotes, so we check the serialized output
     statement_sql = statement.sql(dialect="mysql")
     assert "50%s off" in statement_sql
+
+
+def test_parse_one_handles_comment_with_apostrophe_before_string_literal() -> None:
+    """
+    Regression test: apostrophe in a comment should not desynchronize quote-tracking.
+    The string literal 'discount %s applied' should be preserved.
+    """
+    sql = "-- don't touch this\nUPDATE users SET note = 'discount %s applied' WHERE id = 1"
+    [statement] = require_safe_write_statements([sql])
+    statement_sql = statement.sql(dialect="mysql")
+    # The string literal should preserve %s (not be replaced with ?)
+    assert "discount %s applied" in statement_sql
+
+
+def test_parse_one_handles_backtick_identifier_with_apostrophe_before_string_literal() -> None:
+    """
+    Regression test: apostrophe in a backtick-quoted identifier should not desynchronize
+    quote-tracking. The string literal 'discount %s applied' should be preserved.
+    """
+    sql = "UPDATE `weird'table` SET note = 'discount %s applied' WHERE id = 1"
+    [statement] = require_safe_write_statements([sql])
+    statement_sql = statement.sql(dialect="mysql")
+    # The string literal should preserve %s (not be replaced with ?)
+    assert "discount %s applied" in statement_sql
