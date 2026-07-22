@@ -73,31 +73,43 @@ async def main() -> None:
 
         server_info = await uapi("get_server_information")
         print("server_information:", server_info)
-        host = server_info.get("data", {}).get("host") or httpx.URL(base_url).host
-        port = int(server_info.get("data", {}).get("port") or 3306)
+        raw_host = (server_info.get("data") or {}).get("host")
+        # cPanel reports "localhost" when MySQL is co-located with cPanel itself (the common
+        # case) — that literal string is not connectable from outside, so fall back to the
+        # cPanel hostname in that case. Verified against a real account on 2026-07-22.
+        host = raw_host if raw_host and raw_host != "localhost" else httpx.URL(base_url).host
+        port = int((server_info.get("data") or {}).get("port") or 3306)
+
+        restrictions = await uapi("get_restrictions")
+        print("get_restrictions:", restrictions)
+        prefix = restrictions["data"]["prefix"]
+        max_len = int(restrictions["data"]["max_username_length"])
 
         add_host = await uapi("add_host", host=egress_ip)
         print("add_host:", add_host)
 
-        username = f"spike_{secrets.token_hex(4)}"
+        # cPanel rejects any username that doesn't already carry the account's required
+        # prefix — it does not auto-prefix a short name for you. Verified against a real
+        # account on 2026-07-22 (rejected "spike_xxxx", accepted "drumagco_spikexxxx").
+        suffix = f"spike{secrets.token_hex(3)}"
+        username = (prefix + suffix)[:max_len]
         password = secrets.token_urlsafe(24)
         create_user = await uapi("create_user", name=username, password=password)
         print("create_user:", create_user)
-        full_username = create_user.get("data", {}).get("user", username)
 
         try:
             await uapi(
                 "set_privileges_on_database",
-                user=full_username,
+                user=username,
                 database=database,
                 privileges="SELECT",
             )
-            print(f"Attempting TCP connect to {host}:{port} as {full_username} ...")
+            print(f"Attempting TCP connect to {host}:{port} as {username} ...")
             conn = await asyncio.wait_for(
                 aiomysql.connect(
                     host=host,
                     port=port,
-                    user=full_username,
+                    user=username,
                     password=password,
                     db=database,
                     connect_timeout=10,
@@ -110,7 +122,7 @@ async def main() -> None:
             conn.close()
             print("SPIKE RESULT: direct TCP connection WORKS.")
         finally:
-            await uapi("delete_user", name=full_username)
+            await uapi("delete_user", name=username)
             await uapi("delete_host", host=egress_ip)
 
 
@@ -142,6 +154,34 @@ If it printed `WORKS`: continue to Task 2 exactly as written below.
 If it timed out or was refused: **stop**. Do not proceed with Tasks 2–11 as written — they
 assume direct TCP reachability. Go back to `superpowers:brainstorming` to design the documented
 fallback (mediated execution via cPanel) from the spec's "Fallback documentado" section instead.
+
+**VERIFIED on 2026-07-22 against the real `drumagcom` account on `srv142.prodns.com.br`, from the
+real VPS Semeion egress IP (`159.195.12.83`) via the `semeion` SSH host: direct TCP MySQL
+connectivity WORKS end to end.** `add_host` → `create_user` → `set_privileges_on_database` →
+direct TCP connect → `SELECT 1` → full cleanup (`delete_user`/`delete_database`/`delete_host`)
+all succeeded; the account was verified empty again afterward (`list_databases`, `list_users`,
+`get_host_notes` all returned empty). Three real findings from running this against production
+cPanel — **all three are incorporated into Task 5 below already; do not implement Task 5 without
+them**:
+
+1. **Mandatory username prefix.** `Mysql::create_user` rejects any name that doesn't start with
+   the account's required prefix (e.g. `drumagco_` for account `drumagcom` — cPanel truncates
+   longer usernames, it is not simply `f"{account}_"`). The exact prefix must be read from
+   `Mysql::get_restrictions`, which returns `{"prefix": ..., "max_username_length": ...}`. The
+   original plan's assumption — that `create_user`'s response contains an auto-prefixed
+   `user` field — was wrong; the request must already carry the correct prefix or it is rejected
+   outright with no auto-correction.
+2. **`get_server_information` returns `"host": "localhost"`** when MySQL is co-located with
+   cPanel (the common case for shared hosting) — that literal string is unusable for an external
+   TCP connection (it would resolve locally on whichever machine tries to connect). The real
+   connect target is the same hostname as `cpanel_base_url`. `MySQLEphemeralSession` must fall
+   back to that hostname whenever `get_server_information` reports `"localhost"` or an empty host.
+3. **TLS is a client-tool quirk, not a server requirement.** The `mariadb`/`mysql` CLI on VPS
+   Semeion failed with `TLS/SSL error: Permission denied (13)` until SSL was explicitly disabled
+   (`--ssl=0`); the server accepted a plain connection fine. `aiomysql.connect()` does not
+   attempt TLS by default unless a `ssl` context is passed, so this is not expected to affect
+   Task 5's implementation — but if `MySQLEphemeralSession` connections ever fail with a TLS-
+   flavored error in later manual testing, this is the known cause, not a regression.
 
 - [ ] **Step 4: Commit the spike script (keep it — it's a useful diagnostic for future accounts)**
 
@@ -756,13 +796,21 @@ git commit -m "feat(db): add ephemeral grant, backup, and migration ledger table
 - Consumes: `CPanelClient.call(capability, account, arguments, *, retry_safe=False)` (from `cpanel.py`,
   returns the UAPI `result` dict — for `Mysql::*` UAPI calls that's the inner `data` payload per
   `cpanel.py:191-197`), `Database.insert_ephemeral_grant`/`delete_ephemeral_grant` (Task 4),
-  `Settings.mysql_egress_ip`/`database_ephemeral_ttl_seconds`/`database_connect_timeout_seconds` (Task 2).
+  `Settings.mysql_egress_ip`/`database_ephemeral_ttl_seconds`/`database_connect_timeout_seconds`/
+  `cpanel_base_url` (Task 2 and existing `config.py`).
 - Produces:
   - `class MySQLProvisionError(RuntimeError)` with `.code: str`
   - `class MySQLEphemeralSession` — async context manager, constructor
-    `(*, cpanel: CPanelClient, db: Database, settings: Settings, account: str, database: str, mode: Literal["read", "write"], connect_fn: ConnectFn = _default_connect)`
+    `(*, cpanel: CPanelClient, db: Database, settings: Settings, account: str, database: str, mode: Literal["read", "write"], connect_fn: ConnectFn = _default_connect, username_suffix_factory: Callable[[], str] = ...)`
   - `MySQLEphemeralSession.fetch_all(sql: str, params: Sequence[Any] | None = None, *, max_rows: int | None = None) -> list[dict[str, Any]]`
   - `MySQLEphemeralSession.run_transaction(statements: list[tuple[str, Sequence[Any]]], *, commit: bool) -> int` (returns total rows affected)
+
+**Verified against real cPanel (2026-07-22, see Task 1's findings):** `MySQLEphemeralSession`
+must (1) call `uapi.Mysql.get_restrictions` and prefix the generated username with its `prefix`
+field, truncated to `max_username_length` — cPanel rejects unprefixed usernames outright; and
+(2) fall back to the `cpanel_base_url` hostname whenever `get_server_information` reports
+`"host": "localhost"`, since that literal string is not connectable externally. Both are already
+reflected in the implementation code below — do not revert to the earlier design.
 
 - [ ] **Step 1: Write failing tests using a fake connection (no real MySQL, no Docker)**
 
@@ -837,8 +885,8 @@ class FakeCPanel:
         self.calls.append((capability.function, account, arguments))
         if capability.function == "get_server_information":
             return {"host": "db.example.com", "port": 3306}
-        if capability.function == "create_user":
-            return {"user": f"cpaneluser_{arguments['name']}"}
+        if capability.function == "get_restrictions":
+            return {"prefix": "acctalph_", "max_username_length": 32}
         return {}
 
 
@@ -868,7 +916,7 @@ async def test_session_provisions_and_cleans_up(settings: Settings, db: Database
     async def fake_connect(**kwargs: Any) -> FakeConnection:
         assert kwargs["host"] == "db.example.com"
         assert kwargs["port"] == 3306
-        assert kwargs["user"] == "cpaneluser_eph_test"
+        assert kwargs["user"] == "acctalph_eph_test"
         return fake_connection
 
     async with MySQLEphemeralSession(
@@ -879,7 +927,7 @@ async def test_session_provisions_and_cleans_up(settings: Settings, db: Database
         database="acctalpha_app",
         mode="read",
         connect_fn=fake_connect,
-        username_factory=lambda: "eph_test",
+        username_suffix_factory=lambda: "eph_test",
     ) as session:
         rows = await session.fetch_all("SELECT 1")
         assert rows == [{"id": 1}]
@@ -1071,7 +1119,7 @@ class MySQLEphemeralSession:
         database: str,
         mode: Literal["read", "write"],
         connect_fn: ConnectFn = _default_connect,
-        username_factory: Callable[[], str] = lambda: f"eph_{secrets.token_hex(4)}",
+        username_suffix_factory: Callable[[], str] = lambda: f"eph{secrets.token_hex(4)}",
     ) -> None:
         self.cpanel = cpanel
         self.db = db
@@ -1080,7 +1128,7 @@ class MySQLEphemeralSession:
         self.database = database
         self.mode = mode
         self.connect_fn = connect_fn
-        self.username_factory = username_factory
+        self.username_suffix_factory = username_suffix_factory
         self._grant_id: str | None = None
         self._username: str | None = None
         self._host_created = False
@@ -1094,7 +1142,11 @@ class MySQLEphemeralSession:
         server_info = await self.cpanel.call(
             _internal_capability("get_server_information"), self.account, {}
         )
-        host = (server_info or {}).get("host") or "127.0.0.1"
+        raw_host = (server_info or {}).get("host")
+        # cPanel reports "localhost" when MySQL is co-located with cPanel (the common case) —
+        # that literal string is not connectable externally. Verified against a real account
+        # on 2026-07-22: fall back to the cPanel hostname itself in that case.
+        host = raw_host if raw_host and raw_host != "localhost" else self._cpanel_hostname()
         port = int((server_info or {}).get("port") or 3306)
 
         try:
@@ -1108,14 +1160,23 @@ class MySQLEphemeralSession:
             if "already" not in str(exc).lower():
                 raise MySQLProvisionError(f"add_host failed: {exc}", "PROVISION_FAILED") from exc
 
-        candidate_username = self.username_factory()
+        # cPanel rejects any username that doesn't already carry the account's required
+        # prefix — it does not auto-prefix a short name. Verified against a real account on
+        # 2026-07-22 (create_user rejected "spike_xxxx", accepted "drumagco_spikexxxx" after
+        # reading the required prefix from get_restrictions).
+        restrictions = await self.cpanel.call(
+            _internal_capability("get_restrictions"), self.account, {}
+        )
+        prefix = (restrictions or {}).get("prefix") or f"{self.account}_"
+        max_len = int((restrictions or {}).get("max_username_length") or 32)
+        self._username = (prefix + self.username_suffix_factory())[:max_len]
+
         password = secrets.token_urlsafe(24)
-        create_result = await self.cpanel.call(
+        await self.cpanel.call(
             _internal_capability("create_user"),
             self.account,
-            {"name": candidate_username, "password": password},
+            {"name": self._username, "password": password},
         )
-        self._username = (create_result or {}).get("user") or candidate_username
 
         privileges = "SELECT" if self.mode == "read" else "ALL PRIVILEGES"
         await self.cpanel.call(
@@ -1149,6 +1210,11 @@ class MySQLEphemeralSession:
         if self._connection is not None:
             self._connection.close()
         await self._cleanup()
+
+    def _cpanel_hostname(self) -> str:
+        import httpx
+
+        return httpx.URL(self.settings.cpanel_base_url).host
 
     async def _cleanup(self) -> None:
         user_deleted = True
@@ -1574,8 +1640,8 @@ class RecordingFakeCPanel:
         self.calls.append(capability.function)
         if capability.function == "get_server_information":
             return {"host": "db.example.com", "port": 3306}
-        if capability.function == "create_user":
-            return {"user": f"cpaneluser_{arguments['name']}"}
+        if capability.function == "get_restrictions":
+            return {"prefix": "acctalph_", "max_username_length": 32}
         return {}
 
 
