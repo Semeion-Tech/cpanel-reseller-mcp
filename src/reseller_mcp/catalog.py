@@ -54,6 +54,7 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
     "uapi.Fileman.get_file_content": (Risk.SENSITIVE_READ, Role.ADMIN, "reader"),
     "database.query_readonly": (Risk.SENSITIVE_READ, Role.OPERATOR, "operator"),
     "database.transaction_execute": (Risk.REVERSIBLE_WRITE, Role.OPERATOR, "operator"),
+    "workflow.database_migration_apply": (Risk.REVERSIBLE_WRITE, Role.ADMIN, "admin"),
 }
 
 DESTRUCTIVE = re.compile(
@@ -110,6 +111,7 @@ ALIASES = {
     "uapi.Bandwidth.query": "banda tráfego consumo conta domínio",
     "database.query_readonly": "banco dados mysql consulta select leitura",
     "database.transaction_execute": "banco dados mysql escrever transacao update delete insert",
+    "workflow.database_migration_apply": "banco dados migration migracao versionada aplicar",
 }
 
 
@@ -333,6 +335,27 @@ def curated_capabilities() -> list[Capability]:
                     },
                 },
                 ["database", "statements"],
+            ),
+        },
+        {
+            "id": "workflow.database_migration_apply",
+            "title": "Aplicar migration de banco de dados",
+            "description": (
+                "Aplica uma migration versionada e idempotente: reaplicar o mesmo migration_id "
+                "com o mesmo conteúdo é um no-op seguro; conteúdo diferente é bloqueado. Reusa "
+                "backup, dry-run e pós-validação de database.transaction_execute."
+            ),
+            "schema": _schema(
+                {
+                    "database": string,
+                    "migration_id": string,
+                    "statements": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": _schema({"sql": string, "params": {"type": "array"}}, ["sql"]),
+                    },
+                },
+                ["database", "migration_id", "statements"],
             ),
         },
         {

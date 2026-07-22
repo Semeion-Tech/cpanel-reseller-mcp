@@ -79,6 +79,12 @@ class Harness:
         self._workflow_execute_hooks["database.transaction_execute"] = (
             self.database.execute_transaction
         )
+        self._workflow_prepare_hooks["workflow.database_migration_apply"] = (
+            self.database.prepare_migration
+        )
+        self._workflow_execute_hooks["workflow.database_migration_apply"] = (
+            self.database.execute_migration
+        )
         self.metrics = OperationMetrics()
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._background_tasks: set[asyncio.Task[None]] = set()
