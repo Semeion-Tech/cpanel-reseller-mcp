@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import re
+
 import sqlglot
 from sqlglot import exp
+
+_QUOTED_SEGMENT = re.compile(r"'(?:[^'\\]|\\.)*'|\"(?:[^\"\\]|\\.)*\"")
 
 ALLOWED_WRITE_TYPES: tuple[type[exp.Expression], ...] = (exp.Update, exp.Delete, exp.Insert)
 
@@ -12,8 +16,22 @@ class SQLGuardrailError(ValueError):
         self.code = code
 
 
+def _replace_outside_quotes(sql: str, old: str, new: str) -> str:
+    """Replace old with new in sql, but only outside of string literals."""
+    parts: list[str] = []
+    last_end = 0
+    for match in _QUOTED_SEGMENT.finditer(sql):
+        parts.append(sql[last_end : match.start()].replace(old, new))
+        parts.append(match.group())
+        last_end = match.end()
+    parts.append(sql[last_end:].replace(old, new))
+    return "".join(parts)
+
+
 def _parse_one(sql: str) -> exp.Expression:
-    normalized_sql = sql.replace("%s", "?").replace("%d", "?").replace("%i", "?")
+    normalized_sql = _replace_outside_quotes(sql, "%s", "?")
+    normalized_sql = _replace_outside_quotes(normalized_sql, "%d", "?")
+    normalized_sql = _replace_outside_quotes(normalized_sql, "%i", "?")
     try:
         statements = sqlglot.parse(normalized_sql, dialect="mysql")
     except sqlglot.errors.ParseError as exc:
@@ -61,4 +79,4 @@ def derive_backup_select(statement: exp.Expression) -> str | None:
         select = select.where(condition.copy())
     sql_output = select.sql(dialect="mysql")
     # Replace ? placeholders back to %s for MySQL driver (pyformat style)
-    return sql_output.replace("?", "%s")
+    return _replace_outside_quotes(sql_output, "?", "%s")

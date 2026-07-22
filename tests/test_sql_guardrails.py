@@ -96,3 +96,23 @@ def test_derive_backup_select_for_delete_preserves_placeholder() -> None:
     assert backup_sql is not None
     assert "%s" in backup_sql
     assert "= 1" not in backup_sql
+
+
+def test_derive_backup_select_preserves_question_mark_in_string_literal() -> None:
+    """Regression test: question marks inside string literals should not be converted to %s."""
+    [statement] = require_safe_write_statements(
+        ["DELETE FROM sessions WHERE note = 'is this ok?'"]
+    )
+    backup_sql = derive_backup_select(statement)
+    assert backup_sql is not None
+    assert "is this ok?" in backup_sql
+
+
+def test_parse_one_preserves_percent_placeholder_in_string_literal() -> None:
+    """Regression test: %s inside string literals should not be converted to ?."""
+    [statement] = require_safe_write_statements(
+        ["UPDATE users SET bio = '50%s off' WHERE id = 42"]
+    )
+    # sqlglot may normalize quotes, so we check the serialized output
+    statement_sql = statement.sql(dialect="mysql")
+    assert "50%s off" in statement_sql
