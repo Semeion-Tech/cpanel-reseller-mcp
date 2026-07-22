@@ -1,0 +1,242 @@
+name: CI/CD
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+  schedule:
+    - cron: "17 6 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  ACTIONLINT_VERSION: "1.7.12"
+  PYTHON_VERSION: "3.12"
+  UV_VERSION: "0.10.2"
+  IMAGE_NAME: ghcr.io/semeion-tech/cpanel-reseller-mcp
+
+jobs:
+  quality:
+    name: Quality, tests and security
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Validate GitHub Actions workflow
+        run: |
+          curl --fail --silent --show-error --location \
+            "https://github.com/rhysd/actionlint/releases/download/v${ACTIONLINT_VERSION}/actionlint_${ACTIONLINT_VERSION}_linux_amd64.tar.gz" \
+            --output /tmp/actionlint.tar.gz
+          printf '%s  %s\n' \
+            '8aca8db96f1b94770f1b0d72b6dddcb1ebb8123cb3712530b08cc387b349a3d8' \
+            '/tmp/actionlint.tar.gz' | sha256sum --check
+          tar --extract --gzip --file /tmp/actionlint.tar.gz --directory /tmp actionlint
+          /tmp/actionlint .github/workflows/ci-cd.yml
+
+      - name: Validate deployment shell
+        run: |
+          bash -n deploy/remote_deploy.sh
+          docker run --rm --volume "$PWD:/mnt:ro" \
+            koalaman/shellcheck:v0.11.0@sha256:61862eba1fcf09a484ebcc6feea46f1782532571a34ed51fedf90dd25f925a8d \
+            /mnt/deploy/remote_deploy.sh
+
+      - name: Set up Python
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+
+      - name: Set up uv
+        uses: astral-sh/setup-uv@37802adc94f370d6bfd71619e3f0bf239e1f3b78 # v7
+        with:
+          version: ${{ env.UV_VERSION }}
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Install locked dependencies
+        run: uv sync --frozen --extra dev
+
+      - name: Check formatting
+        run: uv run ruff format --check .
+
+      - name: Lint
+        run: uv run ruff check .
+
+      - name: Type check
+        run: uv run mypy src/reseller_mcp
+
+      - name: Run tests
+        run: uv run pytest -q
+
+      - name: Audit locked Python dependencies
+        run: |
+          uv export --frozen --no-dev --no-emit-project --format requirements-txt \
+            --output-file /tmp/requirements.txt --quiet
+          uv run pip-audit --requirement /tmp/requirements.txt --disable-pip
+
+      - name: Scan repository for vulnerabilities, secrets and misconfiguration
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: CRITICAL,HIGH
+          ignore-unfixed: true
+          exit-code: "1"
+
+  container:
+    name: Container build
+    needs: quality
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      contents: read
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Build and validate container image
+        run: |
+          docker buildx build \
+            --platform linux/amd64 \
+            --cache-from type=gha,scope=reseller-mcp \
+            --cache-to type=gha,mode=max,scope=reseller-mcp \
+            --tag "$IMAGE_NAME:ci-${GITHUB_SHA}" \
+            --load \
+            .
+          docker run --rm --entrypoint python "$IMAGE_NAME:ci-${GITHUB_SHA}" \
+            -c 'import reseller_mcp; print("container import ok")'
+
+  publish:
+    name: Publish signed container
+    needs:
+      - quality
+      - container
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    permissions:
+      attestations: write
+      contents: read
+      id-token: write
+      packages: write
+    steps:
+      - name: Check out source
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Set up QEMU for ARM64
+        uses: docker/setup-qemu-action@c7c53464625b32c7a7e944ae62b3e17d2b600130 # v3
+        with:
+          platforms: arm64
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Build and publish immutable multi-architecture image
+        id: publish
+        run: |
+          docker buildx build \
+            --platform linux/amd64,linux/arm64 \
+            --cache-from type=gha,scope=reseller-mcp \
+            --cache-to type=gha,mode=max,scope=reseller-mcp \
+            --provenance=mode=max \
+            --sbom=true \
+            --label "org.opencontainers.image.source=${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label "org.opencontainers.image.revision=${GITHUB_SHA}" \
+            --tag "$IMAGE_NAME:sha-${GITHUB_SHA}" \
+            --tag "$IMAGE_NAME:main" \
+            --metadata-file /tmp/build-metadata.json \
+            --push \
+            .
+          digest="$(python3 -c 'import json; print(json.load(open("/tmp/build-metadata.json"))["containerimage.digest"])')"
+          case "$digest" in
+            sha256:*) ;;
+            *) echo "invalid image digest" >&2; exit 1 ;;
+          esac
+          printf 'digest=%s\n' "$digest" >> "$GITHUB_OUTPUT"
+          docker buildx imagetools inspect "$IMAGE_NAME:sha-${GITHUB_SHA}"
+
+      - name: Attest image provenance
+        uses: actions/attest@f7c74d28b9d84cb8768d0b8ca14a4bac6ef463e6 # v4
+        with:
+          subject-name: ${{ env.IMAGE_NAME }}
+          subject-digest: ${{ steps.publish.outputs.digest }}
+          push-to-registry: true
+
+  deploy-production:
+    name: Deploy production
+    needs:
+      - publish
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on:
+      - self-hosted
+      - Linux
+      - ARM64
+      - cpanel-reseller-production
+    timeout-minutes: 15
+    environment:
+      name: production
+      url: https://mcp-reseller.semeiontech.com/healthz
+    concurrency:
+      group: cpanel-reseller-mcp-production
+      cancel-in-progress: false
+    permissions:
+      contents: read
+      packages: read
+    env:
+      DEPLOY_PATH: /home/semeion-tech/cpanel-reseller-mcp
+      HEALTHCHECK_URL: https://mcp-reseller.semeiontech.com/healthz
+    steps:
+      - name: Check out deployment files
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+
+      - name: Validate production target
+        run: |
+          test "$(id -un)" = semeion-tech
+          test -d "$DEPLOY_PATH"
+          test -f "$DEPLOY_PATH/.env"
+          test "$(stat -c %a "$DEPLOY_PATH/.env")" = 600
+          docker compose version
+
+      - name: Log in to GHCR
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: printf '%s' "$GHCR_TOKEN" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+
+      - name: Deploy and verify with automatic rollback
+        run: |
+          image="$IMAGE_NAME:sha-$GITHUB_SHA"
+          bash deploy/remote_deploy.sh \
+            "$image" "$GITHUB_SHA" "$GITHUB_RUN_ID" \
+            "$GITHUB_WORKSPACE/compose.yaml" "$HEALTHCHECK_URL"
+
+      - name: Clean transient registry credentials
+        if: always()
+        run: docker logout ghcr.io >/dev/null 2>&1 || true
+
+      - name: Publish deployment summary
+        run: |
+          {
+            echo "### Production deployment"
+            echo
+            echo "- Image: \`$IMAGE_NAME:sha-$GITHUB_SHA\`"
+            echo "- Runner: \`${{ runner.name }}\`"
+            echo "- Target: \`$DEPLOY_PATH\`"
+            echo "- Health: $HEALTHCHECK_URL"
+          } >> "$GITHUB_STEP_SUMMARY"
