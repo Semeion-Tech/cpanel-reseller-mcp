@@ -223,13 +223,37 @@ class DatabaseWorkflows:
                 "warnings": ["migration already applied; no-op"],
             }
 
-        result = await self.execute_transaction(preparation, connect_fn=connect_fn)
+        # Re-check ledger inside the lock to close TOCTOU race
         database_name = preparation.arguments["database"]
+        migration_id = before["migration_id"]
+        checksum = before["checksum"]
+        existing = self.harness.db.get_migration(
+            preparation.account or "", database_name, migration_id
+        )
+        if existing is not None:
+            if existing["checksum"] != checksum:
+                from .harness import HarnessError
+
+                raise HarnessError(
+                    f"migration_id {migration_id!r} was already applied with different content",
+                    "MIGRATION_CHECKSUM_MISMATCH",
+                )
+            # Another execute won the race; return no-op result
+            return {
+                "committed": False,
+                "already_applied": True,
+                "rows_affected": existing.get("rows_affected"),
+                "after_state": existing,
+                "verified": True,
+                "warnings": ["migration already applied; no-op"],
+            }
+
+        result = await self.execute_transaction(preparation, connect_fn=connect_fn)
         self.harness.db.record_migration(
             account=preparation.account or "",
             database_name=database_name,
-            migration_id=before["migration_id"],
-            checksum=before["checksum"],
+            migration_id=migration_id,
+            checksum=checksum,
             backup_ref=before.get("backup_ref"),
             rows_affected=result.get("rows_affected"),
             status="applied" if result.get("verified") else "failed",

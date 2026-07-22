@@ -406,3 +406,97 @@ async def test_execute_migration_noop_when_already_applied(
     result = await workflows.execute_migration(preparation)
     assert result["already_applied"] is True
     assert result["committed"] is False
+
+
+async def test_execute_migration_toctou_race_already_applied_by_another(
+    settings: Settings, db: Database
+) -> None:
+    cpanel = RecordingFakeCPanel()
+    harness = Harness(settings, db, cpanel)  # type: ignore[arg-type]
+    workflows = DatabaseWorkflows(harness)
+
+    arguments = {
+        "database": "acctalpha_app",
+        "migration_id": "2026_07_disable_user",
+        "statements": [{"sql": "UPDATE users SET active = 0 WHERE id = 1", "params": []}],
+    }
+    checksum = workflows._checksum(arguments["statements"])
+
+    # Simulate prepare_migration running when nothing is recorded yet
+    before_state = {
+        "already_applied": False,
+        "migration_id": "2026_07_disable_user",
+        "checksum": checksum,
+        "backup_ref": None,
+        "dry_run_rows_affected": 1,
+        "statement_count": 1,
+    }
+
+    # Simulate another execute_migration winning the race and committing first
+    db.record_migration(
+        account="acctalpha",
+        database_name="acctalpha_app",
+        migration_id="2026_07_disable_user",
+        checksum=checksum,
+        backup_ref=None,
+        rows_affected=1,
+        status="applied",
+    )
+
+    preparation = _make_preparation("acctalpha", arguments, before_state)
+
+    # Verify that connect_fn is never called (proving execute_transaction wasn't invoked)
+    connect_called = False
+
+    async def failing_connect(**kwargs: Any) -> FakeConnection:
+        nonlocal connect_called
+        connect_called = True
+        raise AssertionError("connect_fn should not be called in TOCTOU race scenario")
+
+    result = await workflows.execute_migration(preparation, connect_fn=failing_connect)
+    assert result["already_applied"] is True
+    assert result["committed"] is False
+    assert connect_called is False
+
+
+async def test_execute_migration_toctou_race_checksum_mismatch(
+    settings: Settings, db: Database
+) -> None:
+    cpanel = RecordingFakeCPanel()
+    harness = Harness(settings, db, cpanel)  # type: ignore[arg-type]
+    workflows = DatabaseWorkflows(harness)
+
+    arguments = {
+        "database": "acctalpha_app",
+        "migration_id": "2026_07_disable_user",
+        "statements": [{"sql": "UPDATE users SET active = 0 WHERE id = 1", "params": []}],
+    }
+    checksum = workflows._checksum(arguments["statements"])
+    different_checksum = "different-checksum-value"
+
+    # Simulate prepare_migration running when nothing is recorded yet
+    before_state = {
+        "already_applied": False,
+        "migration_id": "2026_07_disable_user",
+        "checksum": checksum,
+        "backup_ref": None,
+        "dry_run_rows_affected": 1,
+        "statement_count": 1,
+    }
+
+    # Simulate another execute_migration recording a different checksum for same migration_id
+    db.record_migration(
+        account="acctalpha",
+        database_name="acctalpha_app",
+        migration_id="2026_07_disable_user",
+        checksum=different_checksum,
+        backup_ref=None,
+        rows_affected=5,
+        status="applied",
+    )
+
+    preparation = _make_preparation("acctalpha", arguments, before_state)
+
+    with pytest.raises(HarnessError) as exc:
+        await workflows.execute_migration(preparation)
+    assert exc.value.code == "MIGRATION_CHECKSUM_MISMATCH"
