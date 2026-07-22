@@ -48,6 +48,8 @@ não são executáveis até serem curadas ou a proteção ser explicitamente des
 
 Consulte [contratos e segurança](docs/api-contracts.md) e a
 [decisão sobre a evolução do harness](docs/architecture/adr-001-modular-harness-and-memory.md).
+Para trabalhar nessa evolução, siga o
+[guia incremental para iniciantes](docs/architecture/incremental-harness-evolution-guide.md).
 
 ## Desenvolvimento
 

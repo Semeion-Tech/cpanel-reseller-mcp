@@ -92,3 +92,9 @@ nenhuma chamada de memória ocorre enquanto `MEMORY_PROVIDER=none`.
 Reavaliar `agents/` quando houver pelo menos um fluxo que exija planejamento entre múltiplos passos
 não conhecido em tempo de desenvolvimento. Reavaliar Mem0 quando houver casos de uso aprovados,
 modelo de ameaça, contrato de exclusão e owner operacional definidos.
+
+## Guia de implementação
+
+O passo a passo para iniciantes, a ordem dos PRs, os critérios de aceite e os tópicos reservados
+para aprofundamento estão no
+[guia incremental de evolução do harness](incremental-harness-evolution-guide.md).
