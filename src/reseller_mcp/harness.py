@@ -16,6 +16,7 @@ from .audit import AuditLog
 from .catalog import ALIASES
 from .config import Settings
 from .cpanel import CPanelClient, CPanelError
+from .database_workflows import DatabaseWorkflows
 from .db import Database
 from .models import (
     ApiFamily,
@@ -68,6 +69,10 @@ class Harness:
         self._workflow_execute_hooks: dict[
             str, Callable[[Preparation], Awaitable[dict[str, Any]]]
         ] = {}
+        self.database = DatabaseWorkflows(self)
+        self._workflow_query_hooks["database.query_readonly"] = (
+            self.database.query_readonly
+        )
         self.metrics = OperationMetrics()
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._background_tasks: set[asyncio.Task[None]] = set()

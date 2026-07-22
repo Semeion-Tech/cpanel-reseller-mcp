@@ -52,6 +52,7 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
         "operator",
     ),
     "uapi.Fileman.get_file_content": (Risk.SENSITIVE_READ, Role.ADMIN, "reader"),
+    "database.query_readonly": (Risk.SENSITIVE_READ, Role.OPERATOR, "operator"),
 }
 
 DESTRUCTIVE = re.compile(
@@ -106,6 +107,7 @@ ALIASES = {
     "uapi.SSL.list_ssl_items": "ssl certificados validade tls https",
     "uapi.SSL.can_ssl_redirect": "ssl https redirecionamento seguro",
     "uapi.Bandwidth.query": "banda tráfego consumo conta domínio",
+    "database.query_readonly": "banco dados mysql consulta select leitura",
 }
 
 
@@ -294,6 +296,25 @@ def curated_capabilities() -> list[Capability]:
             "schema": _schema(),
         },
         {
+            "id": "database.query_readonly",
+            "title": "Consultar banco de dados (somente leitura)",
+            "description": (
+                "Executa um único SELECT parametrizado contra um banco MySQL da conta, usando "
+                "credenciais efêmeras de privilégio mínimo provisionadas sob demanda."
+            ),
+            "schema": _schema(
+                {"database": string, "sql": string, "params": {"type": "array"}},
+                ["database", "sql"],
+            ),
+            "examples": [
+                {
+                    "database": "acctalpha_app",
+                    "sql": "SELECT id, email FROM users WHERE id = %s",
+                    "params": [42],
+                }
+            ],
+        },
+        {
             "id": "uapi.Fileman.get_file_content",
             "title": "Ler arquivo",
             "description": "Lê um arquivo dentro da conta cPanel.",
@@ -393,6 +414,9 @@ def curated_capabilities() -> list[Capability]:
         if api_name == "uapi":
             module, function = rest
             api = ApiFamily.UAPI
+        elif api_name in {"workflow", "database"}:
+            module, function = None, rest[0]
+            api = ApiFamily.WORKFLOW
         else:
             module, function = None, rest[0]
             api = ApiFamily.WHM
