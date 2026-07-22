@@ -7,6 +7,7 @@ import secrets
 import time
 import uuid
 from collections import defaultdict
+from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -58,6 +59,15 @@ class Harness:
         )
         self.audit = AuditLog(db)
         self.accounts = AccountWorkflows(self)
+        self._workflow_query_hooks: dict[
+            str, Callable[[str | None, dict[str, Any]], Awaitable[Any]]
+        ] = {}
+        self._workflow_prepare_hooks: dict[
+            str, Callable[[str | None, dict[str, Any]], Awaitable[dict[str, Any] | None]]
+        ] = {}
+        self._workflow_execute_hooks: dict[
+            str, Callable[[Preparation], Awaitable[dict[str, Any]]]
+        ] = {}
         self.metrics = OperationMetrics()
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._background_tasks: set[asyncio.Task[None]] = set()
@@ -154,7 +164,16 @@ class Harness:
             self.metrics.record(capability_id, "denied", (time.perf_counter() - started) * 1000)
             raise HarnessError(str(exc), exc.code) from exc
         try:
-            data = await self.cpanel.call(capability, account, arguments, retry_safe=True)
+            if capability.api == ApiFamily.WORKFLOW:
+                hook = self._workflow_query_hooks.get(capability.id)
+                if hook is None:
+                    raise HarnessError(
+                        "no workflow handler registered for this capability",
+                        "WORKFLOW_HANDLER_MISSING",
+                    )
+                data = await hook(account, arguments)
+            else:
+                data = await self.cpanel.call(capability, account, arguments, retry_safe=True)
             data = self._filter_scoped_result(
                 principal, capability, data, account=account, arguments=arguments
             )
@@ -287,12 +306,24 @@ class Harness:
         async with self._locks[lock_key]:
             self.db.set_preparation_state(preparation.id, PreparationState.EXECUTING)
             try:
-                data = await self.cpanel.call(
-                    capability, preparation.account, preparation.arguments, retry_safe=False
-                )
-                after_state, verified, warnings = await self._verify(
-                    capability, preparation.account, preparation.arguments, data
-                )
+                if capability.api == ApiFamily.WORKFLOW:
+                    hook = self._workflow_execute_hooks.get(capability.id)
+                    if hook is None:
+                        raise HarnessError(
+                            "no workflow handler registered for this capability",
+                            "WORKFLOW_HANDLER_MISSING",
+                        )
+                    data = await hook(preparation)
+                    after_state = data.get("after_state")
+                    verified = data.get("verified")
+                    warnings = list(data.get("warnings") or [])
+                else:
+                    data = await self.cpanel.call(
+                        capability, preparation.account, preparation.arguments, retry_safe=False
+                    )
+                    after_state, verified, warnings = await self._verify(
+                        capability, preparation.account, preparation.arguments, data
+                    )
                 payload = {
                     "data": data,
                     "before_state": preparation.before_state,
@@ -589,6 +620,11 @@ class Harness:
     async def _snapshot(
         self, capability: Capability, account: str | None, arguments: dict[str, Any]
     ) -> dict[str, Any] | None:
+        if capability.api == ApiFamily.WORKFLOW:
+            hook = self._workflow_prepare_hooks.get(capability.id)
+            if hook is None:
+                return None
+            return await hook(account, arguments)
         snapshot = self._snapshot_capability(capability, arguments)
         if not snapshot:
             return None

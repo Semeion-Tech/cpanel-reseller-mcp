@@ -5,7 +5,7 @@ import asyncio
 import pytest
 
 from reseller_mcp.harness import HarnessError
-from reseller_mcp.models import Principal, Role
+from reseller_mcp.models import ApiFamily, Capability, Principal, Risk, Role
 
 
 @pytest.mark.asyncio
@@ -126,3 +126,50 @@ def test_read_intent_search_excludes_destructive_results(harness, admin) -> None
     assert all(item["risk"] in {"read", "sensitive_read"} for item in results)
     mysql = next(item for item in results if item["id"] == "uapi.Mysql.list_databases")
     assert mysql["input_schema"]["additionalProperties"] is False
+
+
+@pytest.mark.asyncio
+async def test_workflow_query_capability_dispatches_to_registered_hook(harness, admin) -> None:
+    workflow_capability = Capability(
+        id="workflow.test_echo",
+        api=ApiFamily.WORKFLOW,
+        function="test_echo",
+        title="Test echo",
+        description="Test-only workflow capability.",
+        risk=Risk.READ,
+        required_role=Role.VIEWER,
+        upstream_profile="reader",
+        input_schema={"type": "object", "additionalProperties": True},
+        curated=True,
+    )
+    harness.db.sync_capabilities([workflow_capability], {})
+
+    async def echo_hook(account, arguments):
+        return {"echoed": arguments}
+
+    harness._workflow_query_hooks["workflow.test_echo"] = echo_hook
+
+    result = await harness.query_execute(admin, "workflow.test_echo", "acctalpha", {"x": 1})
+    assert result.ok is True
+    assert result.data == {"echoed": {"x": 1}}
+
+
+@pytest.mark.asyncio
+async def test_workflow_query_capability_without_registered_hook_fails(harness, admin) -> None:
+    workflow_capability = Capability(
+        id="workflow.test_missing",
+        api=ApiFamily.WORKFLOW,
+        function="test_missing",
+        title="Test missing",
+        description="Test-only workflow capability with no handler.",
+        risk=Risk.READ,
+        required_role=Role.VIEWER,
+        upstream_profile="reader",
+        input_schema={"type": "object", "additionalProperties": True},
+        curated=True,
+    )
+    harness.db.sync_capabilities([workflow_capability], {})
+
+    with pytest.raises(HarnessError) as exc:
+        await harness.query_execute(admin, "workflow.test_missing", "acctalpha", {})
+    assert exc.value.code == "WORKFLOW_HANDLER_MISSING"
