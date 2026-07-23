@@ -14,6 +14,70 @@ def _payload_data(value: Any) -> Any:
     return value
 
 
+def _file_content_summary(value: Any) -> dict[str, Any]:
+    payload = _payload_data(value)
+    if isinstance(payload, str):
+        summary: dict[str, Any] = {
+            "content_present": bool(payload),
+            "content_length_chars": len(payload),
+        }
+        if payload:
+            summary["line_count"] = payload.count("\n") + 1
+        return summary
+
+    if not isinstance(payload, dict):
+        return {"content_present": payload is not None}
+
+    summary = {
+        key: payload.get(key)
+        for key in (
+            "path",
+            "dir",
+            "file",
+            "filename",
+            "name",
+            "extension",
+            "encoding",
+            "charset",
+            "mime_type",
+            "content_type",
+            "size",
+            "size_bytes",
+            "bytes",
+            "line_count",
+            "lines",
+            "truncated",
+            "is_truncated",
+            "has_more",
+        )
+        if key in payload and payload.get(key) is not None
+    }
+
+    content_value: Any = None
+    for key in ("content", "text", "body", "raw", "data"):
+        candidate = payload.get(key)
+        if isinstance(candidate, str):
+            content_value = candidate
+            break
+        if isinstance(candidate, (bytes, bytearray, memoryview)):
+            content_value = candidate
+            break
+
+    if isinstance(content_value, str):
+        summary["content_present"] = bool(content_value)
+        summary["content_length_chars"] = len(content_value)
+        if content_value:
+            summary["line_count"] = content_value.count("\n") + 1
+    elif isinstance(content_value, (bytes, bytearray, memoryview)):
+        summary["content_present"] = True
+        summary["content_length_bytes"] = len(content_value)
+    else:
+        summary["content_present"] = any(
+            key in payload for key in ("content", "text", "body", "raw", "data")
+        )
+    return summary
+
+
 def _integer(value: Any) -> int | None:
     if value in (None, "", "unlimited"):
         return None
@@ -259,5 +323,8 @@ def normalize_result(capability_id: str, value: Any, account: str | None = None)
                 }
             )
         return {"month": value.get("month"), "year": value.get("year"), "items": accounts}
+
+    if capability_id == "uapi.Fileman.get_file_content":
+        return _file_content_summary(value)
 
     return _payload_data(value)
