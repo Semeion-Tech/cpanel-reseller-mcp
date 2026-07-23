@@ -53,8 +53,8 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
     ),
     "uapi.Fileman.get_file_content": (Risk.SENSITIVE_READ, Role.ADMIN, "reader"),
     "database.query_readonly": (Risk.SENSITIVE_READ, Role.OPERATOR, "operator"),
-    "database.transaction_execute": (Risk.REVERSIBLE_WRITE, Role.OPERATOR, "operator"),
-    "workflow.database_migration_apply": (Risk.REVERSIBLE_WRITE, Role.ADMIN, "admin"),
+    "database.transaction_execute": (Risk.DESTRUCTIVE, Role.OPERATOR, "operator"),
+    "workflow.database_migration_apply": (Risk.DESTRUCTIVE, Role.ADMIN, "admin"),
 }
 
 DESTRUCTIVE = re.compile(
