@@ -503,6 +503,11 @@ class Catalog:
         live_whm = set(raw.get("whm", []))
         live_uapi = set(raw.get("uapi", []))
         for capability in by_id.values():
+            # Workflow capabilities are implemented by this service, not advertised by
+            # the upstream WHM/UAPI catalog. Their availability is therefore independent
+            # of the live cPanel operation inventory.
+            if capability.api == ApiFamily.WORKFLOW:
+                continue
             live_key = (
                 capability.function
                 if capability.api == ApiFamily.WHM

@@ -88,6 +88,18 @@ class Harness:
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._background_tasks: set[asyncio.Task[None]] = set()
 
+    @staticmethod
+    def _workflow_error(exc: Exception) -> dict[str, Any]:
+        if isinstance(exc, CPanelError):
+            return exc.as_dict()
+        if isinstance(exc, (HarnessError, MySQLProvisionError)):
+            return {"code": exc.code, "message": str(exc)}
+        return {
+            "code": "WORKFLOW_EXECUTION_FAILED",
+            "message": "workflow execution failed",
+            "details": {"exception_type": type(exc).__name__},
+        }
+
     def sync_catalog(self, capabilities: list[Capability]) -> None:
         self.db.sync_capabilities(capabilities, ALIASES)
 
@@ -181,20 +193,16 @@ class Harness:
             raise HarnessError(str(exc), exc.code) from exc
         try:
             if capability.api == ApiFamily.WORKFLOW:
-                hook = self._workflow_query_hooks.get(capability.id)
-                if hook is None:
-                    raise HarnessError(
-                        "no workflow handler registered for this capability",
-                        "WORKFLOW_HANDLER_MISSING",
-                    )
                 try:
+                    hook = self._workflow_query_hooks.get(capability.id)
+                    if hook is None:
+                        raise HarnessError(
+                            "no workflow handler registered for this capability",
+                            "WORKFLOW_HANDLER_MISSING",
+                        )
                     data = await hook(account, arguments)
-                except (CPanelError, MySQLProvisionError) as exc:
-                    error = (
-                        exc.as_dict()
-                        if isinstance(exc, CPanelError)
-                        else {"code": exc.code, "message": str(exc)}
-                    )
+                except Exception as exc:
+                    error = self._workflow_error(exc)
                     audit_id = self.audit.append(
                         principal=principal,
                         capability_id=capability.id,
@@ -351,21 +359,16 @@ class Harness:
             self.db.set_preparation_state(preparation.id, PreparationState.EXECUTING)
             try:
                 if capability.api == ApiFamily.WORKFLOW:
-                    hook = self._workflow_execute_hooks.get(capability.id)
-                    if hook is None:
-                        raise HarnessError(
-                            "no workflow handler registered for this capability",
-                            "WORKFLOW_HANDLER_MISSING",
-                        )
                     try:
+                        hook = self._workflow_execute_hooks.get(capability.id)
+                        if hook is None:
+                            raise HarnessError(
+                                "no workflow handler registered for this capability",
+                                "WORKFLOW_HANDLER_MISSING",
+                            )
                         data = await hook(preparation)
-                    except (CPanelError, MySQLProvisionError) as exc:
-                        error_code = (
-                            exc.code
-                            if isinstance(exc, (CPanelError, MySQLProvisionError))
-                            else "UNKNOWN_ERROR"
-                        )
-                        error = {"code": error_code, "message": str(exc)}
+                    except Exception as exc:
+                        error = self._workflow_error(exc)
                         self.db.set_preparation_state(
                             preparation.id, PreparationState.FAILED, error=error
                         )

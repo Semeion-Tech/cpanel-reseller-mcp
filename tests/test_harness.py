@@ -178,9 +178,9 @@ async def test_workflow_query_capability_without_registered_hook_fails(harness, 
     )
     harness.db.sync_capabilities([workflow_capability], {})
 
-    with pytest.raises(HarnessError) as exc:
-        await harness.query_execute(admin, "workflow.test_missing", "acctalpha", {})
-    assert exc.value.code == "WORKFLOW_HANDLER_MISSING"
+    result = await harness.query_execute(admin, "workflow.test_missing", "acctalpha", {})
+    assert result.ok is False
+    assert result.error["code"] == "WORKFLOW_HANDLER_MISSING"
 
 
 @pytest.mark.asyncio
@@ -240,5 +240,41 @@ async def test_workflow_execute_hook_mysql_provision_error_marks_failed(harness,
     assert result.ok is False
     assert result.error["code"] == "TEST_EXECUTE_FAILED"
 
+    prep = harness.db.get_preparation(prepared["preparation_id"])
+    assert prep.state == PreparationState.FAILED
+
+
+@pytest.mark.asyncio
+async def test_workflow_execute_hook_unexpected_error_marks_failed(harness, admin) -> None:
+    workflow_capability = Capability(
+        id="workflow.test_unexpected_execute_error",
+        api=ApiFamily.WORKFLOW,
+        function="test_unexpected_execute_error",
+        title="Test unexpected error",
+        description="Test-only workflow that raises an unexpected driver error.",
+        risk=Risk.DESTRUCTIVE,
+        required_role=Role.ADMIN,
+        upstream_profile="admin",
+        input_schema={"type": "object", "additionalProperties": True},
+        curated=True,
+    )
+    harness.db.sync_capabilities([workflow_capability], {})
+
+    async def failing_execute_hook(preparation):
+        raise RuntimeError("driver connection details must not leak")
+
+    harness._workflow_execute_hooks[workflow_capability.id] = failing_execute_hook
+    prepared = await harness.prepare_action(admin, workflow_capability.id, "acctalpha", {})
+
+    result = await harness.execute_action(
+        admin, prepared["preparation_id"], prepared["confirmation_phrase"]
+    )
+
+    assert result.ok is False
+    assert result.error == {
+        "code": "WORKFLOW_EXECUTION_FAILED",
+        "message": "workflow execution failed",
+        "details": {"exception_type": "RuntimeError"},
+    }
     prep = harness.db.get_preparation(prepared["preparation_id"])
     assert prep.state == PreparationState.FAILED

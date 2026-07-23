@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -8,7 +9,11 @@ import pytest
 from reseller_mcp.config import Settings
 from reseller_mcp.cpanel import CPanelError
 from reseller_mcp.db import Database
-from reseller_mcp.mysql_client import MySQLEphemeralSession, reap_expired_grants
+from reseller_mcp.mysql_client import (
+    MySQLEphemeralSession,
+    MySQLProvisionError,
+    reap_expired_grants,
+)
 
 
 class FakeCursor:
@@ -177,6 +182,32 @@ async def test_run_transaction_rolls_back_when_commit_false(
     assert fake_connection.began is True
     assert fake_connection.rolled_back is True
     assert fake_connection.committed is False
+
+
+async def test_query_timeout_is_enforced(settings: Settings, db: Database) -> None:
+    class SlowCursor(FakeCursor):
+        async def execute(self, sql: str, params: Any = None) -> None:
+            await asyncio.sleep(1)
+
+    class SlowConnection(FakeConnection):
+        def cursor(self, *_: Any, **__: Any) -> SlowCursor:
+            return SlowCursor(self.rows)
+
+    settings.database_query_timeout_seconds = 0.01
+    session = MySQLEphemeralSession(
+        cpanel=FakeCPanel(),  # type: ignore[arg-type]
+        db=db,
+        settings=settings,
+        account="acctalpha",
+        database="acctalpha_app",
+        mode="read",
+    )
+    session._connection = SlowConnection()
+
+    with pytest.raises(MySQLProvisionError) as error:
+        await session.fetch_all("SELECT SLEEP(1)")
+
+    assert error.value.code == "DATABASE_QUERY_TIMEOUT"
 
 
 async def test_cleanup_failure_leaves_ledger_row_for_reaper(

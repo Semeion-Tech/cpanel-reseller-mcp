@@ -103,7 +103,7 @@ A seguinte tarefa deve ser executada periodicamente (recomendado: a cada 5 minut
 host de produção:
 
 ```cron
-*/5 * * * * reseller-mcp-admin reap-mysql-grants >> /var/log/reseller-mcp/reap.log 2>&1
+*/5 * * * * cd /home/semeion-tech/cpanel-reseller-mcp && docker compose exec -T reseller-mcp reseller-mcp-admin reap-mysql-grants >> /var/log/reseller-mcp/reap.log 2>&1
 ```
 
 Essa tarefa revoga usuários MySQL efêmeros e entradas de host cuja TTL expirou, limpando grants

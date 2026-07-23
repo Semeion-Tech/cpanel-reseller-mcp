@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import secrets
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
@@ -238,27 +239,42 @@ class MySQLEphemeralSession:
         *,
         max_rows: int | None = None,
     ) -> list[dict[str, Any]]:
-        async with self._connection.cursor(aiomysql.DictCursor) as cursor:
-            await cursor.execute(sql, params or ())
-            if max_rows is not None:
-                return list(await cursor.fetchmany(max_rows))
-            return list(await cursor.fetchall())
+        try:
+            async with asyncio.timeout(self.settings.database_query_timeout_seconds):
+                async with self._connection.cursor(aiomysql.DictCursor) as cursor:
+                    await cursor.execute(sql, params or ())
+                    if max_rows is not None:
+                        return list(await cursor.fetchmany(max_rows))
+                    return list(await cursor.fetchall())
+        except TimeoutError as exc:
+            raise MySQLProvisionError(
+                "database query exceeded the configured timeout",
+                "DATABASE_QUERY_TIMEOUT",
+            ) from exc
 
     async def run_transaction(
         self, statements: list[tuple[str, Sequence[Any]]], *, commit: bool
     ) -> int:
-        await self._connection.begin()
-        total_rows = 0
         try:
-            async with self._connection.cursor() as cursor:
-                for sql, params in statements:
-                    await cursor.execute(sql, params or ())
-                    total_rows += cursor.rowcount
-            if commit:
-                await self._connection.commit()
-            else:
-                await self._connection.rollback()
-        except Exception:
+            async with asyncio.timeout(self.settings.database_query_timeout_seconds):
+                await self._connection.begin()
+                total_rows = 0
+                try:
+                    async with self._connection.cursor() as cursor:
+                        for sql, params in statements:
+                            await cursor.execute(sql, params or ())
+                            total_rows += cursor.rowcount
+                    if commit:
+                        await self._connection.commit()
+                    else:
+                        await self._connection.rollback()
+                except Exception:
+                    await self._connection.rollback()
+                    raise
+        except TimeoutError as exc:
             await self._connection.rollback()
-            raise
+            raise MySQLProvisionError(
+                "database transaction exceeded the configured timeout",
+                "DATABASE_QUERY_TIMEOUT",
+            ) from exc
         return total_rows
