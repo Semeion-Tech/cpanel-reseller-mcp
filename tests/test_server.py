@@ -57,12 +57,12 @@ async def test_query_execute_returns_single_text_block_with_smaller_envelope(
         {
             "capability_id": "uapi.Fileman.get_file_content",
             "account": "outpromo",
-                "arguments": {
-                    "dir": "/home2/outpromo/reservadesalas.outpromo.com.br",
-                    "file": "small.txt",
-                },
+            "arguments": {
+                "dir": "/home2/outpromo/reservadesalas.outpromo.com.br",
+                "file": "small.txt",
             },
-        )
+        },
+    )
     large = await mcp.call_tool(
         "query_execute",
         {
