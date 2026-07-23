@@ -14,10 +14,29 @@ def test_require_single_select_accepts_plain_select() -> None:
     require_single_select("SELECT id, email FROM users WHERE id = %s")
 
 
+def test_require_single_select_accepts_cte_select() -> None:
+    require_single_select("WITH active AS (SELECT id FROM users) SELECT id FROM active")
+
+
 def test_require_single_select_rejects_non_select() -> None:
     with pytest.raises(SQLGuardrailError) as exc:
         require_single_select("DELETE FROM users WHERE id = 1")
     assert exc.value.code == "SQL_NOT_SELECT"
+
+
+def test_require_single_select_rejects_cte_wrapped_delete() -> None:
+    with pytest.raises(SQLGuardrailError) as exc:
+        require_single_select(
+            "WITH targets AS (SELECT id FROM users) "
+            "DELETE FROM users WHERE id IN (SELECT id FROM targets)"
+        )
+    assert exc.value.code == "SQL_NOT_SELECT"
+
+
+def test_require_single_select_rejects_locking_select() -> None:
+    with pytest.raises(SQLGuardrailError) as exc:
+        require_single_select("SELECT id FROM users WHERE id = %s FOR UPDATE")
+    assert exc.value.code == "SQL_LOCK_NOT_ALLOWED"
 
 
 def test_require_single_select_rejects_multiple_statements() -> None:
