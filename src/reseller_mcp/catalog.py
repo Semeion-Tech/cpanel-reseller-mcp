@@ -52,6 +52,9 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
         "operator",
     ),
     "uapi.Fileman.get_file_content": (Risk.SENSITIVE_READ, Role.ADMIN, "reader"),
+    "database.query_readonly": (Risk.SENSITIVE_READ, Role.OPERATOR, "operator"),
+    "database.transaction_execute": (Risk.DESTRUCTIVE, Role.OPERATOR, "operator"),
+    "workflow.database_migration_apply": (Risk.DESTRUCTIVE, Role.ADMIN, "admin"),
 }
 
 DESTRUCTIVE = re.compile(
@@ -106,6 +109,9 @@ ALIASES = {
     "uapi.SSL.list_ssl_items": "ssl certificados validade tls https",
     "uapi.SSL.can_ssl_redirect": "ssl https redirecionamento seguro",
     "uapi.Bandwidth.query": "banda tráfego consumo conta domínio",
+    "database.query_readonly": "banco dados mysql consulta select leitura",
+    "database.transaction_execute": "banco dados mysql escrever transacao update delete insert",
+    "workflow.database_migration_apply": "banco dados migration migracao versionada aplicar",
 }
 
 
@@ -294,6 +300,65 @@ def curated_capabilities() -> list[Capability]:
             "schema": _schema(),
         },
         {
+            "id": "database.query_readonly",
+            "title": "Consultar banco de dados (somente leitura)",
+            "description": (
+                "Executa um único SELECT parametrizado contra um banco MySQL da conta, usando "
+                "credenciais efêmeras de privilégio mínimo provisionadas sob demanda."
+            ),
+            "schema": _schema(
+                {"database": string, "sql": string, "params": {"type": "array"}},
+                ["database", "sql"],
+            ),
+            "examples": [
+                {
+                    "database": "acctalpha_app",
+                    "sql": "SELECT id, email FROM users WHERE id = %s",
+                    "params": [42],
+                }
+            ],
+        },
+        {
+            "id": "database.transaction_execute",
+            "title": "Executar transação no banco de dados",
+            "description": (
+                "Executa uma ou mais instruções UPDATE/DELETE/INSERT parametrizadas em uma "
+                "única transação, com backup das linhas afetadas, dry-run e pós-validação."
+            ),
+            "schema": _schema(
+                {
+                    "database": string,
+                    "statements": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": _schema({"sql": string, "params": {"type": "array"}}, ["sql"]),
+                    },
+                },
+                ["database", "statements"],
+            ),
+        },
+        {
+            "id": "workflow.database_migration_apply",
+            "title": "Aplicar migration de banco de dados",
+            "description": (
+                "Aplica uma migration versionada e idempotente: reaplicar o mesmo migration_id "
+                "com o mesmo conteúdo é um no-op seguro; conteúdo diferente é bloqueado. Reusa "
+                "backup, dry-run e pós-validação de database.transaction_execute."
+            ),
+            "schema": _schema(
+                {
+                    "database": string,
+                    "migration_id": string,
+                    "statements": {
+                        "type": "array",
+                        "minItems": 1,
+                        "items": _schema({"sql": string, "params": {"type": "array"}}, ["sql"]),
+                    },
+                },
+                ["database", "migration_id", "statements"],
+            ),
+        },
+        {
             "id": "uapi.Fileman.get_file_content",
             "title": "Ler arquivo",
             "description": "Lê um arquivo dentro da conta cPanel.",
@@ -393,6 +458,9 @@ def curated_capabilities() -> list[Capability]:
         if api_name == "uapi":
             module, function = rest
             api = ApiFamily.UAPI
+        elif api_name in {"workflow", "database"}:
+            module, function = None, rest[0]
+            api = ApiFamily.WORKFLOW
         else:
             module, function = None, rest[0]
             api = ApiFamily.WHM
@@ -435,6 +503,11 @@ class Catalog:
         live_whm = set(raw.get("whm", []))
         live_uapi = set(raw.get("uapi", []))
         for capability in by_id.values():
+            # Workflow capabilities are implemented by this service, not advertised by
+            # the upstream WHM/UAPI catalog. Their availability is therefore independent
+            # of the live cPanel operation inventory.
+            if capability.api == ApiFamily.WORKFLOW:
+                continue
             live_key = (
                 capability.function
                 if capability.api == ApiFamily.WHM

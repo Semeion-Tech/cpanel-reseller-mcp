@@ -97,6 +97,20 @@ O backup SQLite não é restaurado automaticamente: as migrações do serviço s
 o banco poderia apagar auditoria produzida depois do deploy. Use `pre-deploy.db` apenas após análise
 explícita do incidente.
 
+## Crons operacionais
+
+A seguinte tarefa deve ser executada periodicamente (recomendado: a cada 5 minutos) via crontab no
+host de produção:
+
+```cron
+*/5 * * * * cd /home/semeion-tech/cpanel-reseller-mcp && docker compose exec -T reseller-mcp reseller-mcp-admin reap-mysql-grants >> /var/log/reseller-mcp/reap.log 2>&1
+```
+
+Essa tarefa revoga usuários MySQL efêmeros e entradas de host cuja TTL expirou, limpando grants
+órfãos que não foram imediatamente revogados durante o encerramento de sessão (rede instável ou
+falha de serviço cPanel). É um mecanismo de segurança que evita manter credenciais temporárias ativas
+além do esperado.
+
 ## Primeira ativação
 
 Antes do primeiro merge em `main`:

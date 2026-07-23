@@ -38,6 +38,11 @@ class Settings(BaseSettings):
     allow_untyped_advanced: bool = False
     allow_sensitive_file_reads: bool = False
     health_min_php_version: str = "8.2"
+    mysql_egress_ip: str = ""
+    database_ephemeral_ttl_seconds: int = Field(default=300, ge=60, le=1800)
+    database_connect_timeout_seconds: float = Field(default=10.0, gt=0, le=60)
+    database_query_timeout_seconds: float = Field(default=15.0, gt=0, le=120)
+    database_max_rows: int = Field(default=1000, ge=1, le=100000)
     memory_provider: str = "none"
     mem0_endpoint: str | None = None
     mem0_user_id: str = "kleber"

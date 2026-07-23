@@ -51,3 +51,11 @@ def test_untyped_advanced_capabilities_are_blocked_by_default(tmp_path, admin) -
     with pytest.raises(PolicyError) as error:
         PolicyEngine().authorize(admin, capability, None, {})
     assert error.value.code == "UNTYPED_CAPABILITY_BLOCKED"
+
+
+def test_database_writes_require_confirmation(db) -> None:
+    policy = PolicyEngine()
+    transaction_capability = db.get_capability("database.transaction_execute")
+    assert policy.requires_confirmation(transaction_capability) is True
+    migration_capability = db.get_capability("workflow.database_migration_apply")
+    assert policy.requires_confirmation(migration_capability) is True

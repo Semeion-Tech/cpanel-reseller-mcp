@@ -102,6 +102,35 @@ CREATE TABLE IF NOT EXISTS audit_events (
 );
 CREATE INDEX IF NOT EXISTS audit_events_time_idx ON audit_events(occurred_at DESC);
 CREATE INDEX IF NOT EXISTS audit_events_user_idx ON audit_events(user_id, occurred_at DESC);
+CREATE TABLE IF NOT EXISTS mysql_ephemeral_grants (
+  id TEXT PRIMARY KEY,
+  account TEXT NOT NULL,
+  database_name TEXT NOT NULL,
+  mysql_username TEXT NOT NULL,
+  host_entry_created INTEGER NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS mysql_ephemeral_grants_expiry_idx
+  ON mysql_ephemeral_grants(expires_at);
+CREATE TABLE IF NOT EXISTS db_backups (
+  id TEXT PRIMARY KEY,
+  account TEXT NOT NULL,
+  database_name TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  payload TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS db_migrations (
+  account TEXT NOT NULL,
+  database_name TEXT NOT NULL,
+  migration_id TEXT NOT NULL,
+  checksum TEXT NOT NULL,
+  applied_at TEXT NOT NULL,
+  backup_ref TEXT,
+  rows_affected INTEGER,
+  status TEXT NOT NULL,
+  PRIMARY KEY(account, database_name, migration_id)
+);
 """
 
 
@@ -503,3 +532,115 @@ class Database:
         with self.connect() as conn:
             result = conn.execute("DELETE FROM audit_events WHERE occurred_at<?", (cutoff,))
             return result.rowcount
+
+    def insert_ephemeral_grant(
+        self,
+        *,
+        grant_id: str,
+        account: str,
+        database_name: str,
+        mysql_username: str,
+        host_entry_created: bool,
+        ttl_seconds: int,
+    ) -> None:
+        now = datetime.now(UTC)
+        expires_at = now + timedelta(seconds=ttl_seconds)
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO mysql_ephemeral_grants
+                   (id,account,database_name,mysql_username,host_entry_created,
+                    created_at,expires_at)
+                   VALUES(?,?,?,?,?,?,?)""",
+                (
+                    grant_id,
+                    account,
+                    database_name,
+                    mysql_username,
+                    int(host_entry_created),
+                    now.isoformat(),
+                    expires_at.isoformat(),
+                ),
+            )
+
+    def delete_ephemeral_grant(self, grant_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM mysql_ephemeral_grants WHERE id=?", (grant_id,))
+
+    def list_expired_ephemeral_grants(self) -> list[dict[str, Any]]:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as conn:
+            rows = conn.execute(
+                "SELECT * FROM mysql_ephemeral_grants WHERE expires_at<?", (now,)
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+    def save_backup(self, account: str, database_name: str, rows: list[dict[str, Any]]) -> str:
+        backup_id = str(uuid.uuid4())
+        with self.connect() as conn:
+            conn.execute(
+                "INSERT INTO db_backups(id,account,database_name,created_at,payload) "
+                "VALUES(?,?,?,?,?)",
+                (
+                    backup_id,
+                    account,
+                    database_name,
+                    datetime.now(UTC).isoformat(),
+                    json.dumps(rows, ensure_ascii=False, default=str),
+                ),
+            )
+        return backup_id
+
+    def get_backup(self, backup_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM db_backups WHERE id=?", (backup_id,)).fetchone()
+        if not row:
+            return None
+        value = dict(row)
+        value["payload"] = json.loads(value["payload"])
+        return value
+
+    def get_migration(
+        self, account: str, database_name: str, migration_id: str
+    ) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute(
+                """SELECT * FROM db_migrations
+                   WHERE account=? AND database_name=? AND migration_id=?""",
+                (account, database_name, migration_id),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def record_migration(
+        self,
+        *,
+        account: str,
+        database_name: str,
+        migration_id: str,
+        checksum: str,
+        backup_ref: str | None,
+        rows_affected: int | None,
+        status: str,
+    ) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO db_migrations
+                   (account,database_name,migration_id,checksum,applied_at,backup_ref,
+                    rows_affected,status)
+                   VALUES(?,?,?,?,?,?,?,?)
+                   ON CONFLICT(account,database_name,migration_id) DO UPDATE SET
+                     checksum=excluded.checksum,
+                     applied_at=excluded.applied_at,
+                     backup_ref=excluded.backup_ref,
+                     rows_affected=excluded.rows_affected,
+                     status=excluded.status""",
+                (
+                    account,
+                    database_name,
+                    migration_id,
+                    checksum,
+                    datetime.now(UTC).isoformat(),
+                    backup_ref,
+                    rows_affected,
+                    status,
+                ),
+            )

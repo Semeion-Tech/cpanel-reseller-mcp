@@ -124,5 +124,26 @@ def export_audit(
     )
 
 
+@app.command("reap-mysql-grants")
+def reap_mysql_grants() -> None:
+    import asyncio
+
+    from .cpanel import CPanelClient
+    from .mysql_client import reap_expired_grants
+
+    settings = get_settings()
+    db = _db()
+    cpanel = CPanelClient(settings)
+
+    async def run() -> int:
+        try:
+            return await reap_expired_grants(cpanel, db, settings)
+        finally:
+            await cpanel.close()
+
+    revoked = asyncio.run(run())
+    typer.echo(json.dumps({"revoked": revoked}))
+
+
 if __name__ == "__main__":
     app()
