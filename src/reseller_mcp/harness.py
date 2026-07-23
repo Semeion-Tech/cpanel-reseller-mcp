@@ -28,6 +28,7 @@ from .models import (
     Risk,
     Role,
 )
+from .mysql_client import MySQLProvisionError
 from .normalizer import normalize_result
 from .observability import OperationMetrics
 from .policy import PolicyEngine, PolicyError
@@ -188,7 +189,35 @@ class Harness:
                         "no workflow handler registered for this capability",
                         "WORKFLOW_HANDLER_MISSING",
                     )
-                data = await hook(account, arguments)
+                try:
+                    data = await hook(account, arguments)
+                except (CPanelError, MySQLProvisionError) as exc:
+                    error = (
+                        exc.as_dict()
+                        if isinstance(exc, CPanelError)
+                        else {"code": exc.code, "message": str(exc)}
+                    )
+                    audit_id = self.audit.append(
+                        principal=principal,
+                        capability_id=capability.id,
+                        account=account,
+                        correlation_id=correlation_id,
+                        phase="query",
+                        outcome="failed",
+                        parameters=arguments,
+                        details=error,
+                    )
+                    self.metrics.record(
+                        capability.id, "failed", (time.perf_counter() - started) * 1000
+                    )
+                    return OperationResult(
+                        ok=False,
+                        capability_id=capability.id,
+                        account=account,
+                        correlation_id=correlation_id,
+                        error=error,
+                        audit_id=audit_id,
+                    )
             else:
                 data = await self.cpanel.call(capability, account, arguments, retry_safe=True)
             data = self._filter_scoped_result(
@@ -330,7 +359,34 @@ class Harness:
                             "no workflow handler registered for this capability",
                             "WORKFLOW_HANDLER_MISSING",
                         )
-                    data = await hook(preparation)
+                    try:
+                        data = await hook(preparation)
+                    except (CPanelError, MySQLProvisionError) as exc:
+                        error_code = (
+                            exc.code
+                            if isinstance(exc, (CPanelError, MySQLProvisionError))
+                            else "UNKNOWN_ERROR"
+                        )
+                        error = {"code": error_code, "message": str(exc)}
+                        self.db.set_preparation_state(
+                            preparation.id, PreparationState.FAILED, error=error
+                        )
+                        audit_id = self.audit.append(
+                            principal=principal,
+                            capability_id=capability.id,
+                            account=preparation.account,
+                            phase="execute",
+                            outcome="failed",
+                            parameters=preparation.arguments,
+                            details=error,
+                        )
+                        return OperationResult(
+                            ok=False,
+                            capability_id=capability.id,
+                            account=preparation.account,
+                            error=error,
+                            audit_id=audit_id,
+                        )
                     after_state = data.get("after_state")
                     verified = data.get("verified")
                     warnings = list(data.get("warnings") or [])

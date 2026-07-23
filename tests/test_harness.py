@@ -5,7 +5,15 @@ import asyncio
 import pytest
 
 from reseller_mcp.harness import HarnessError
-from reseller_mcp.models import ApiFamily, Capability, Principal, Risk, Role
+from reseller_mcp.models import (
+    ApiFamily,
+    Capability,
+    PreparationState,
+    Principal,
+    Risk,
+    Role,
+)
+from reseller_mcp.mysql_client import MySQLProvisionError
 
 
 @pytest.mark.asyncio
@@ -173,3 +181,66 @@ async def test_workflow_query_capability_without_registered_hook_fails(harness, 
     with pytest.raises(HarnessError) as exc:
         await harness.query_execute(admin, "workflow.test_missing", "acctalpha", {})
     assert exc.value.code == "WORKFLOW_HANDLER_MISSING"
+
+
+@pytest.mark.asyncio
+async def test_workflow_query_hook_mysql_provision_error_recorded(harness, admin) -> None:
+    workflow_capability = Capability(
+        id="workflow.test_mysql_error",
+        api=ApiFamily.WORKFLOW,
+        function="test_mysql_error",
+        title="Test MySQL error",
+        description="Test-only workflow that raises MySQLProvisionError.",
+        risk=Risk.READ,
+        required_role=Role.VIEWER,
+        upstream_profile="reader",
+        input_schema={"type": "object", "additionalProperties": True},
+        curated=True,
+    )
+    harness.db.sync_capabilities([workflow_capability], {})
+
+    async def failing_hook(account, arguments):
+        raise MySQLProvisionError("Connection failed", "TEST_CONNECTION_FAILED")
+
+    harness._workflow_query_hooks["workflow.test_mysql_error"] = failing_hook
+
+    result = await harness.query_execute(admin, "workflow.test_mysql_error", "acctalpha", {})
+    assert result.ok is False
+    assert result.error["code"] == "TEST_CONNECTION_FAILED"
+    assert "Connection failed" in result.error["message"]
+
+
+@pytest.mark.asyncio
+async def test_workflow_execute_hook_mysql_provision_error_marks_failed(
+    harness, admin
+) -> None:
+    workflow_capability = Capability(
+        id="workflow.test_mysql_execute_error",
+        api=ApiFamily.WORKFLOW,
+        function="test_mysql_execute_error",
+        title="Test MySQL execute error",
+        description="Test-only workflow that raises MySQLProvisionError on execute.",
+        risk=Risk.DESTRUCTIVE,
+        required_role=Role.ADMIN,
+        upstream_profile="admin",
+        input_schema={"type": "object", "additionalProperties": True},
+        curated=True,
+    )
+    harness.db.sync_capabilities([workflow_capability], {})
+
+    async def failing_execute_hook(preparation):
+        raise MySQLProvisionError("Execution failed", "TEST_EXECUTE_FAILED")
+
+    harness._workflow_execute_hooks["workflow.test_mysql_execute_error"] = failing_execute_hook
+
+    prepared = await harness.prepare_action(
+        admin, "workflow.test_mysql_execute_error", "acctalpha", {}
+    )
+    result = await harness.execute_action(
+        admin, prepared["preparation_id"], prepared["confirmation_phrase"]
+    )
+    assert result.ok is False
+    assert result.error["code"] == "TEST_EXECUTE_FAILED"
+
+    prep = harness.db.get_preparation(prepared["preparation_id"])
+    assert prep.state == PreparationState.FAILED
