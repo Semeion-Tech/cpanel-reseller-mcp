@@ -10,9 +10,25 @@ updates:
     open-pull-requests-limit: 5
     groups:
       python-runtime:
-        dependency-type: production
+        patterns:
+          - aiomysql
+          - httpx
+          - jsonschema
+          - mcp
+          - pydantic
+          - pydantic-settings
+          - sqlglot
+          - typer
+          - uvicorn
       python-development:
-        dependency-type: development
+        patterns:
+          - mypy
+          - pip-audit
+          - pytest
+          - pytest-asyncio
+          - respx
+          - ruff
+          - types-jsonschema
 
   - package-ecosystem: docker
     directory: /
