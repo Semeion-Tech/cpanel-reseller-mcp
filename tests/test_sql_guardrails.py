@@ -125,3 +125,29 @@ def test_derive_backup_select_for_delete_preserves_placeholder() -> None:
 	assert backup_sql is not None
 	assert "%s" in backup_sql
 	assert "= 1" not in backup_sql
+
+
+def test_require_safe_write_statements_rejects_update_with_limit() -> None:
+	with pytest.raises(SQLGuardrailError) as exc:
+		require_safe_write_statements(["UPDATE users SET active = 0 WHERE id = %s LIMIT 1"])
+	assert exc.value.code == "SQL_LIMIT_OR_ORDER_NOT_ALLOWED"
+
+
+def test_require_safe_write_statements_rejects_delete_with_limit() -> None:
+	with pytest.raises(SQLGuardrailError) as exc:
+		require_safe_write_statements(["DELETE FROM sessions WHERE user_id = %s LIMIT 1"])
+	assert exc.value.code == "SQL_LIMIT_OR_ORDER_NOT_ALLOWED"
+
+
+def test_require_safe_write_statements_rejects_update_with_order_by() -> None:
+	with pytest.raises(SQLGuardrailError) as exc:
+		require_safe_write_statements(
+			["UPDATE users SET active = 0 WHERE id = %s ORDER BY id LIMIT 1"]
+		)
+	assert exc.value.code == "SQL_LIMIT_OR_ORDER_NOT_ALLOWED"
+
+
+def test_require_safe_write_statements_rejects_parameterized_limit() -> None:
+	with pytest.raises(SQLGuardrailError) as exc:
+		require_safe_write_statements(["UPDATE users SET active = %s WHERE id = %s LIMIT %s"])
+	assert exc.value.code == "SQL_LIMIT_OR_ORDER_NOT_ALLOWED"

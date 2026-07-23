@@ -65,6 +65,16 @@ def require_safe_write_statements(statements: list[str]) -> list[exp.Expression]
 				"only UPDATE, DELETE, and INSERT are permitted",
 				"SQL_FORBIDDEN_STATEMENT",
 			)
+		if statement.args.get("limit") is not None:
+			raise SQLGuardrailError(
+				"LIMIT clauses are not allowed in write statements",
+				"SQL_LIMIT_OR_ORDER_NOT_ALLOWED",
+			)
+		if statement.args.get("order") is not None:
+			raise SQLGuardrailError(
+				"ORDER BY clauses are not allowed in write statements",
+				"SQL_LIMIT_OR_ORDER_NOT_ALLOWED",
+			)
 		for node in statement.walk():
 			if isinstance(node, exp.Literal) and node.is_string:
 				raise SQLGuardrailError(
