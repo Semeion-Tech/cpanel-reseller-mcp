@@ -220,7 +220,7 @@ def create_server(settings: Settings | None = None) -> tuple[FastMCP[Any], Runti
             "action_prepare then action_execute."
         ),
         annotations=ToolAnnotations(readOnlyHint=True, destructiveHint=False, openWorldHint=True),
-        structured_output=True,
+        structured_output=False,
     )
     async def query_execute(
         capability_id: str, account: str | None = None, arguments: dict[str, Any] | None = None
