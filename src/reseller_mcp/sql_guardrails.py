@@ -44,13 +44,18 @@ def _parse_one(sql: str) -> exp.Expression:
         raise SQLGuardrailError(
             "exactly one SQL statement is required per entry", "SQL_MULTIPLE_STATEMENTS"
         )
-    return non_empty[0]
+    statement = non_empty[0]
+    if not isinstance(statement, exp.Expression):
+        raise SQLGuardrailError("sql did not produce an expression", "SQL_PARSE_ERROR")
+    return statement
 
 
 def require_single_select(sql: str) -> None:
     statement = _parse_one(sql)
     if not isinstance(statement, exp.Select):
         raise SQLGuardrailError("only SELECT statements are allowed here", "SQL_NOT_SELECT")
+    if statement.args.get("locks"):
+        raise SQLGuardrailError("locking SELECT statements are not allowed", "SQL_LOCK_NOT_ALLOWED")
 
 
 def require_safe_write_statements(statements: list[str]) -> list[exp.Expression]:
