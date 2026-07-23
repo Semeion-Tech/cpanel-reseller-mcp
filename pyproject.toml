@@ -11,7 +11,7 @@ dependencies = [
   "mcp[cli]==1.28.1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
-  "sqlglot>=25,<26",
+  "sqlglot>=30.13,<31",
   "typer>=0.15,<1",
   "uvicorn>=0.34,<1",
 ]
