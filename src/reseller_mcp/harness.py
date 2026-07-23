@@ -71,9 +71,7 @@ class Harness:
             str, Callable[[Preparation], Awaitable[dict[str, Any]]]
         ] = {}
         self.database = DatabaseWorkflows(self)
-        self._workflow_query_hooks["database.query_readonly"] = (
-            self.database.query_readonly
-        )
+        self._workflow_query_hooks["database.query_readonly"] = self.database.query_readonly
         self._workflow_prepare_hooks["database.transaction_execute"] = (
             self.database.prepare_transaction
         )

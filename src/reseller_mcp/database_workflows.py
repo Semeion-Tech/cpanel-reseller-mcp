@@ -31,9 +31,7 @@ class DatabaseWorkflows:
         from .harness import HarnessError
 
         if account is None:
-            raise HarnessError(
-                "database workflows require an account", "ACCOUNT_REQUIRED"
-            )
+            raise HarnessError("database workflows require an account", "ACCOUNT_REQUIRED")
         database_name = arguments["database"]
         sql = arguments["sql"]
         try:

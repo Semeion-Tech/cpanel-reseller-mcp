@@ -112,11 +112,7 @@ class MySQLEphemeralSession:
         # cPanel reports "localhost" when MySQL is co-located with cPanel (the common case) —
         # that literal string is not connectable externally. Verified against a real account
         # on 2026-07-22: fall back to the cPanel hostname itself in that case.
-        host = (
-            raw_host
-            if raw_host and raw_host != "localhost"
-            else self._cpanel_hostname()
-        )
+        host = raw_host if raw_host and raw_host != "localhost" else self._cpanel_hostname()
         port = int((server_info or {}).get("port") or 3306)
 
         try:

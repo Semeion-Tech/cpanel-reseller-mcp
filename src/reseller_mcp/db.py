@@ -574,9 +574,7 @@ class Database:
             ).fetchall()
         return [dict(row) for row in rows]
 
-    def save_backup(
-        self, account: str, database_name: str, rows: list[dict[str, Any]]
-    ) -> str:
+    def save_backup(self, account: str, database_name: str, rows: list[dict[str, Any]]) -> str:
         backup_id = str(uuid.uuid4())
         with self.connect() as conn:
             conn.execute(

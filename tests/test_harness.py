@@ -211,9 +211,7 @@ async def test_workflow_query_hook_mysql_provision_error_recorded(harness, admin
 
 
 @pytest.mark.asyncio
-async def test_workflow_execute_hook_mysql_provision_error_marks_failed(
-    harness, admin
-) -> None:
+async def test_workflow_execute_hook_mysql_provision_error_marks_failed(harness, admin) -> None:
     workflow_capability = Capability(
         id="workflow.test_mysql_execute_error",
         api=ApiFamily.WORKFLOW,

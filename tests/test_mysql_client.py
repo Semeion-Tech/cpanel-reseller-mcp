@@ -97,9 +97,7 @@ def db(settings: Settings) -> Database:
     return Database(settings.db_path)
 
 
-async def test_session_provisions_and_cleans_up(
-    settings: Settings, db: Database
-) -> None:
+async def test_session_provisions_and_cleans_up(settings: Settings, db: Database) -> None:
     cpanel = FakeCPanel()
     fake_connection = FakeConnection(rows=[{"id": 1}])
 
@@ -132,9 +130,7 @@ async def test_session_provisions_and_cleans_up(
     assert db.list_expired_ephemeral_grants() == []
 
 
-async def test_session_records_ledger_row_during_use(
-    settings: Settings, db: Database
-) -> None:
+async def test_session_records_ledger_row_during_use(settings: Settings, db: Database) -> None:
     cpanel = FakeCPanel()
     fake_connection = FakeConnection()
 
@@ -176,9 +172,7 @@ async def test_run_transaction_rolls_back_when_commit_false(
         mode="write",
         connect_fn=fake_connect,
     ) as session:
-        await session.run_transaction(
-            [("UPDATE t SET x=1 WHERE id=1", [])], commit=False
-        )
+        await session.run_transaction([("UPDATE t SET x=1 WHERE id=1", [])], commit=False)
 
     assert fake_connection.began is True
     assert fake_connection.rolled_back is True
@@ -199,9 +193,7 @@ async def test_cleanup_failure_leaves_ledger_row_for_reaper(
         ) -> Any:
             if capability.function == "delete_user":
                 raise CPanelError("upstream unavailable", code="UPSTREAM_NETWORK_ERROR")
-            return await super().call(
-                capability, account, arguments, retry_safe=retry_safe
-            )
+            return await super().call(capability, account, arguments, retry_safe=retry_safe)
 
     cpanel = FailingCPanel()
     fake_connection = FakeConnection()
@@ -225,9 +217,7 @@ async def test_cleanup_failure_leaves_ledger_row_for_reaper(
     assert remaining == []  # not expired yet (ttl_seconds default is minutes away)
 
 
-async def test_cleanup_failure_row_exists_directly(
-    settings: Settings, db: Database
-) -> None:
+async def test_cleanup_failure_row_exists_directly(settings: Settings, db: Database) -> None:
     class FailingCPanel(FakeCPanel):
         async def call(
             self,
@@ -239,9 +229,7 @@ async def test_cleanup_failure_row_exists_directly(
         ) -> Any:
             if capability.function == "delete_user":
                 raise CPanelError("upstream unavailable", code="UPSTREAM_NETWORK_ERROR")
-            return await super().call(
-                capability, account, arguments, retry_safe=retry_safe
-            )
+            return await super().call(capability, account, arguments, retry_safe=retry_safe)
 
     cpanel = FailingCPanel()
     fake_connection = FakeConnection()
@@ -279,9 +267,7 @@ async def test_set_privileges_fails_immediate_cleanup_works(
         ) -> Any:
             if capability.function == "set_privileges_on_database":
                 raise CPanelError("test error", code="TEST_ERROR")
-            return await super().call(
-                capability, account, arguments, retry_safe=retry_safe
-            )
+            return await super().call(capability, account, arguments, retry_safe=retry_safe)
 
     cpanel = FailingCPanel()
     fake_connection = FakeConnection()

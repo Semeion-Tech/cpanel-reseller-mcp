@@ -6,6 +6,7 @@ account before building on top of MySQLEphemeralSession. Not part of the automat
 Verified working against a real account on 2026-07-22 (see docs/superpowers/plans/
 2026-07-22-database-access-implementation.md, Task 1).
 """
+
 from __future__ import annotations
 
 import asyncio
