@@ -21,6 +21,9 @@ def test_live_catalog_blocks_sensitive_operations(tmp_path) -> None:
     assert capabilities["uapi.Tokens.create_full_access"].available is False
     assert capabilities["whm.version"].available is True
     assert capabilities["whm.listaccts"].available is False
+    assert capabilities["database.query_readonly"].available is True
+    assert capabilities["database.transaction_execute"].available is True
+    assert capabilities["workflow.database_migration_apply"].available is True
 
 
 def test_known_side_effects_and_sensitive_reads_are_not_plain_reads() -> None:

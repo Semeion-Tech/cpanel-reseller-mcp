@@ -31,7 +31,9 @@ stdio executam `reseller-mcp-bridge`, que usa `mcp-remote` sem expor o bearer to
 - Diagnóstico: `account_dossier`, `account_healthcheck`.
 - Descoberta: `capabilities_search`, `capability_describe`, `capability_check`.
 - Execução: `query_execute`, `action_prepare`, `action_execute`, `action_cancel`,
-  `action_approve`.
+  `action_approve`. Inclui as capabilities `database.query_readonly`,
+  `database.transaction_execute` e `workflow.database_migration_apply` para acesso direto e
+  auditado ao MySQL das contas, substituindo o antigo improviso de publicar PHP temporário.
 - Governança: `audit_search`, `job_get`, `observability_snapshot`.
 
 O catálogo completo contém todas as operações anunciadas pelo servidor, porém operações não

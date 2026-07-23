@@ -41,8 +41,8 @@ class PolicyEngine:
                 f"{capability.id} requires role {capability.required_role.value}",
                 "INSUFFICIENT_ROLE",
             )
-        if capability.api.value == "uapi" and not account:
-            raise PolicyError("UAPI capability requires an account", "ACCOUNT_REQUIRED")
+        if capability.api.value in {"uapi", "workflow"} and not account:
+            raise PolicyError("this capability requires an account", "ACCOUNT_REQUIRED")
         inferred_account = account
         if inferred_account is None and capability.function != "createacct":
             inferred_account = arguments.get("user") or arguments.get("username")

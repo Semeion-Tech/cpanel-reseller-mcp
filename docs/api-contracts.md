@@ -52,6 +52,18 @@ Backups enviados a FTP, e-mails de ativação e solicitações de certificados s
 não simples leituras. Chaves privadas DKIM, access hashes, tokens, sessões e operações que recebem
 senha permanecem bloqueados.
 
+## Acesso a banco de dados
+
+`database.query_readonly`, `database.transaction_execute` e
+`workflow.database_migration_apply` alcançam o MySQL de uma conta por conexão TCP direta,
+usando credenciais efêmeras provisionadas sob demanda via `uapi.Mysql.*` (nunca persistidas).
+`query_readonly` aceita apenas um único `SELECT`. `transaction_execute` valida cada statement
+via AST (`sqlglot`), permitindo somente `UPDATE`/`DELETE`/`INSERT`; o `action_prepare` roda um
+backup das linhas afetadas e um dry-run com `ROLLBACK`, e o `action_execute` aplica com `COMMIT`
+e pós-validação. `workflow.database_migration_apply` acrescenta um ledger versionado
+(`migration_id` + checksum do SQL): reaplicar com o mesmo conteúdo é no-op; conteúdo diferente é
+bloqueado.
+
 ## Schemas e normalização
 
 As operações curadas declaram argumentos obrigatórios e `additionalProperties: false`. Entre os
