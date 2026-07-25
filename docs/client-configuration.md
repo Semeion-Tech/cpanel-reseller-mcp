@@ -59,3 +59,25 @@ docker compose exec reseller-mcp reseller-mcp-admin tokens revoke KEY_ID
 Use `viewer` para consultas, `operator` para operações reversíveis e `admin` para o catálogo
 avançado e ações destrutivas. Escopos aceitam uma ou mais contas cPanel; `*` é acesso global ao
 reseller e deve ficar restrito a administradores.
+
+## Configuração do upstream cPanel/WHM (servidor)
+
+`RESELLER_MCP_CPANEL_RESELLER` no `.env` do servidor **precisa ser o usuário reseller real da
+WHM** — o valor `demo-reseller` do `.env.example` é só placeholder e resulta em `Access denied`
+mesmo com token válido. O mesmo vale para `RESELLER_MCP_CPANEL_BASE_URL`, que aponta para o
+endpoint WHM do servidor (`https://<seu-servidor>:2087`).
+
+A conexão ao WHM usa três tokens próprios (`RESELLER_MCP_CPANEL_READER_TOKEN`,
+`_OPERATOR_TOKEN`, `_ADMIN_TOKEN`), com ACLs crescentes:
+
+- **reader:** `acct-summary`, `basic-system-info`, `basic-whm-functions`, `cpanel-api`,
+  `list-accts`, `list-pkgs`, `mailcheck`, `mysql-info`, `show-bandwidth`, `ssl-info`.
+- **operator:** ACLs do reader + `create-acct`, `create-dns`, `edit-dns`, `edit-mx`,
+  `manage-dns-records`, `ssl`, `suspend-acct`.
+- **admin:** herda operator, sem restrição adicional de ACL.
+
+Autenticação direta na WHM API usa o header `Authorization: whm <reseller>:<TOKEN>`. Ao criar um
+token novo via `api_token_create`, capturar e persistir o segredo imediatamente — a WHM não deixa
+recuperar depois. `.env` é gitignored e deve ficar com `chmod 600`; os valores dos três tokens
+nunca devem ir para memória de IA, logs ou conversa — só os nomes/labels, se precisar rastrear
+qual token é qual para revogação.

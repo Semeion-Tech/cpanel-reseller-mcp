@@ -132,7 +132,7 @@ class MySQLEphemeralSession:
 
             # cPanel rejects any username that doesn't already carry the account's required
             # prefix — it does not auto-prefix a short name. Verified against a real account on
-            # 2026-07-22 (create_user rejected "spike_xxxx", accepted "examplea_spikexxxx" after
+            # 2026-07-22 (create_user rejected "spike_xxxx", accepted "<prefix>_spikexxxx" after
             # reading the required prefix from get_restrictions).
             restrictions = await self.cpanel.call(
                 _internal_capability("get_restrictions"), self.account, {}

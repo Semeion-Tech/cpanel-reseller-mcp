@@ -90,7 +90,7 @@ async def main() -> None:
 
         # cPanel rejects any username that doesn't already carry the account's required
         # prefix — it does not auto-prefix a short name for you. Verified against a real
-        # account on 2026-07-22 (rejected "spike_xxxx", accepted "examplea_spikexxxx").
+        # account on 2026-07-22 (rejected "spike_xxxx", accepted "<prefix>_spikexxxx").
         suffix = f"spike{secrets.token_hex(3)}"
         username = (prefix + suffix)[:max_len]
         password = secrets.token_urlsafe(24)
@@ -155,8 +155,8 @@ If it timed out or was refused: **stop**. Do not proceed with Tasks 2–11 as wr
 assume direct TCP reachability. Go back to `superpowers:brainstorming` to design the documented
 fallback (mediated execution via cPanel) from the spec's "Fallback documentado" section instead.
 
-**VERIFIED on 2026-07-22 against the real `exampleaccount` account on `<whm-server>`, from the
-real VPS Semeion egress IP (`<egress-ip>`) via the `semeion` SSH host: direct TCP MySQL
+**VERIFIED on 2026-07-22 against a real production account on the reseller's WHM server, from the
+VPS egress IP configured in `RESELLER_MCP_MYSQL_EGRESS_IP`: direct TCP MySQL
 connectivity WORKS end to end.** `add_host` → `create_user` → `set_privileges_on_database` →
 direct TCP connect → `SELECT 1` → full cleanup (`delete_user`/`delete_database`/`delete_host`)
 all succeeded; the account was verified empty again afterward (`list_databases`, `list_users`,
@@ -1162,7 +1162,7 @@ class MySQLEphemeralSession:
 
         # cPanel rejects any username that doesn't already carry the account's required
         # prefix — it does not auto-prefix a short name. Verified against a real account on
-        # 2026-07-22 (create_user rejected "spike_xxxx", accepted "examplea_spikexxxx" after
+        # 2026-07-22 (create_user rejected "spike_xxxx", accepted "<prefix>_spikexxxx" after
         # reading the required prefix from get_restrictions).
         restrictions = await self.cpanel.call(
             _internal_capability("get_restrictions"), self.account, {}
