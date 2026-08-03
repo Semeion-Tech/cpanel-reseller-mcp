@@ -11,9 +11,9 @@ dependencies = [
   "mcp[cli]==1.28.1",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
-  "sqlglot>=30.13,<31",
+  "sqlglot>=30.14.0,<31",
   "typer>=0.15,<1",
-  "uvicorn>=0.34,<1",
+  "uvicorn>=0.52.0,<1",
 ]
 
 [project.optional-dependencies]
