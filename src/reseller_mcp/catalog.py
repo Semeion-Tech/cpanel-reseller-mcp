@@ -95,6 +95,8 @@ ALIASES = {
     "uapi.Email.delete_pop": "email excluir caixa postal",
     "uapi.Email.suspend_login": "email suspender bloquear login acesso caixa postal desabilitar",
     "uapi.Email.suspend_incoming": "email suspender bloquear recebimento caixa postal desabilitar",
+    "uapi.Email.unsuspend_login": "email reativar desbloquear login acesso caixa postal habilitar",
+    "uapi.Email.unsuspend_incoming": "email reativar desbloquear recebimento caixa postal",
     "uapi.Mysql.list_databases": "mysql banco bancos listar",
     "uapi.Ftp.list_ftp": "ftp usuários listar",
     "uapi.DomainInfo.list_domains": "domínios subdomínios listar",
@@ -293,6 +295,18 @@ def curated_capabilities() -> list[Capability]:
                 "Bloqueia o recebimento de novas mensagens de uma caixa de e-mail, preservando "
                 "a caixa e as mensagens já armazenadas."
             ),
+            "schema": _schema({"email": string}, ["email"]),
+        },
+        {
+            "id": "uapi.Email.unsuspend_login",
+            "title": "Reativar login de e-mail",
+            "description": "Remove a suspensão de login de uma caixa de e-mail.",
+            "schema": _schema({"email": string}, ["email"]),
+        },
+        {
+            "id": "uapi.Email.unsuspend_incoming",
+            "title": "Reativar recebimento de e-mail",
+            "description": "Remove a suspensão de recebimento de uma caixa de e-mail.",
             "schema": _schema({"email": string}, ["email"]),
         },
         {
