@@ -93,6 +93,8 @@ ALIASES = {
     "uapi.Email.list_pops": "email emails caixas postais listar",
     "uapi.Email.add_pop": "email criar caixa postal",
     "uapi.Email.delete_pop": "email excluir caixa postal",
+    "uapi.Email.suspend_login": "email suspender bloquear login acesso caixa postal desabilitar",
+    "uapi.Email.suspend_incoming": "email suspender bloquear recebimento caixa postal desabilitar",
     "uapi.Mysql.list_databases": "mysql banco bancos listar",
     "uapi.Ftp.list_ftp": "ftp usuários listar",
     "uapi.DomainInfo.list_domains": "domínios subdomínios listar",
@@ -274,6 +276,24 @@ def curated_capabilities() -> list[Capability]:
             "title": "Excluir caixa de e-mail",
             "description": "Exclui uma conta de e-mail e seus dados.",
             "schema": _schema({"email": string, "domain": string}, ["email", "domain"]),
+        },
+        {
+            "id": "uapi.Email.suspend_login",
+            "title": "Suspender login de e-mail",
+            "description": (
+                "Bloqueia o login (IMAP/POP3/Webmail) de uma caixa de e-mail, preservando a "
+                "caixa e as mensagens armazenadas."
+            ),
+            "schema": _schema({"email": string}, ["email"]),
+        },
+        {
+            "id": "uapi.Email.suspend_incoming",
+            "title": "Suspender recebimento de e-mail",
+            "description": (
+                "Bloqueia o recebimento de novas mensagens de uma caixa de e-mail, preservando "
+                "a caixa e as mensagens já armazenadas."
+            ),
+            "schema": _schema({"email": string}, ["email"]),
         },
         {
             "id": "uapi.Ftp.list_ftp",
