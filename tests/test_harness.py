@@ -211,6 +211,25 @@ async def test_workflow_query_hook_mysql_provision_error_recorded(harness, admin
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "capability_id", ["uapi.Email.suspend_login", "uapi.Email.suspend_incoming"]
+)
+async def test_email_suspend_capabilities_are_curated_and_executable(
+    harness, admin, capability_id
+) -> None:
+    prepared = await harness.prepare_action(
+        admin,
+        capability_id,
+        "acctalpha",
+        {"email": "copadoscomandantes26@outpromo.com.br"},
+    )
+    result = await harness.execute_action(
+        admin, prepared["preparation_id"], prepared["confirmation_phrase"]
+    )
+    assert result.ok
+
+
+@pytest.mark.asyncio
 async def test_workflow_execute_hook_mysql_provision_error_marks_failed(harness, admin) -> None:
     workflow_capability = Capability(
         id="workflow.test_mysql_execute_error",
