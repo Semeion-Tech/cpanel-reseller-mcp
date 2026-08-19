@@ -14,6 +14,7 @@ from reseller_mcp.models import Principal, Role
 class FakeCPanel:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None, dict[str, object]]] = []
+        self.mx_changed = False
 
     async def call(self, capability, account, arguments, *, retry_safe=False):
         self.calls.append((capability.id, account, arguments))
@@ -79,6 +80,16 @@ class FakeCPanel:
             return {"status": 1, "data": [{"state": "INVALID", "domain": "alpha.example"}]}
         if capability.id == "uapi.EmailAuth.validate_current_dkims":
             return {"status": 1, "data": [{"state": "MISMATCH", "domain": "alpha.example"}]}
+        if capability.id == "uapi.Email.list_mxs":
+            exchanger = (
+                "new.example-com.mail.protection.outlook.com"
+                if self.mx_changed
+                else "mail.example.com"
+            )
+            return {"status": 1, "data": [{"exchanger": exchanger, "priority": "0"}]}
+        if capability.id == "uapi.Email.change_mx":
+            self.mx_changed = True
+            return {"status": 1, "data": {"changed": True}}
         if capability.id == "uapi.Ftp.allows_anonymous_ftp":
             return {"status": 1, "data": {"allows": 0}}
         if capability.id == "uapi.LangPHP.php_get_vhost_versions":

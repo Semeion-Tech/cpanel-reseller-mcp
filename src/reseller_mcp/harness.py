@@ -717,6 +717,9 @@ class Harness:
     def _snapshot_capability(
         self, capability: Capability, arguments: dict[str, Any]
     ) -> tuple[Capability, str | None, dict[str, Any]] | None:
+        if capability.id == "uapi.Email.change_mx":
+            listing = self._get_capability("uapi.Email.list_mxs")
+            return listing, None, {"domain": arguments.get("domain")}
         if capability.function in {"suspendacct", "unsuspendacct", "removeacct"}:
             summary = self._get_capability("whm.accountsummary")
             return summary, None, {"user": arguments.get("user")}
@@ -757,6 +760,18 @@ class Harness:
         capability: Capability, arguments: dict[str, Any], after: Any
     ) -> bool:
         serialized = json.dumps(after, ensure_ascii=False).lower()
+        if capability.id == "uapi.Email.change_mx":
+            records = Harness._find_mx_records(after)
+            target = str(arguments.get("exchanger", "")).rstrip(".").casefold()
+            expected_priority = int(arguments["priority"])
+            return any(
+                str(item.get("exchanger", item.get("exchange", "")))
+                .rstrip(".")
+                .casefold()
+                == target
+                and Harness._coerce_int(item.get("priority")) == expected_priority
+                for item in records
+            )
         if capability.function == "removeacct":
             return not after or arguments.get("user", "").lower() not in serialized
         if capability.function in {"suspendacct", "unsuspendacct"}:
@@ -784,3 +799,24 @@ class Harness:
             expected_content = str(arguments.get("content", "")).lower()
             return expected_content in serialized or expected_content == str(after).lower()
         return True
+
+    @staticmethod
+    def _coerce_int(value: Any) -> int | None:
+        try:
+            return int(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _find_mx_records(value: Any) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        if isinstance(value, dict):
+            keys = {str(key).casefold() for key in value}
+            if ("exchanger" in keys or "exchange" in keys) and "priority" in keys:
+                records.append(value)
+            for item in value.values():
+                records.extend(Harness._find_mx_records(item))
+        elif isinstance(value, list):
+            for item in value:
+                records.extend(Harness._find_mx_records(item))
+        return records

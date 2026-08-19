@@ -43,3 +43,15 @@ def test_curated_email_auth_schema_declares_domain(tmp_path) -> None:
     schema = capabilities["uapi.EmailAuth.validate_current_dkims"].input_schema
     assert schema["required"] == ["domain"]
     assert schema["additionalProperties"] is False
+
+
+def test_dns_and_mx_capabilities_have_typed_contracts(tmp_path) -> None:
+    capabilities = {item.id: item for item in Catalog(tmp_path / "missing.json").load()}
+
+    assert capabilities["uapi.DNS.lookup"].input_schema["required"] == ["domain"]
+    assert capabilities["uapi.DNS.parse_zone"].input_schema["required"] == ["zone"]
+
+    mx_schema = capabilities["uapi.Email.change_mx"].input_schema
+    assert mx_schema["required"] == ["domain", "exchanger", "oldexchanger", "priority"]
+    assert mx_schema["additionalProperties"] is False
+    assert mx_schema["properties"]["priority"] == {"type": "integer", "minimum": 0}

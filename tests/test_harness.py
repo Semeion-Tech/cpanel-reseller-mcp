@@ -47,6 +47,31 @@ async def test_destructive_action_requires_exact_phrase(harness, admin) -> None:
 
 
 @pytest.mark.asyncio
+async def test_change_mx_snapshots_and_verifies_the_new_record(harness, admin) -> None:
+    prepared = await harness.prepare_action(
+        admin,
+        "uapi.Email.change_mx",
+        "acctalpha",
+        {
+            "domain": "example.com",
+            "exchanger": "new.example-com.mail.protection.outlook.com",
+            "oldexchanger": "mail.example.com",
+            "oldpriority": 0,
+            "priority": 0,
+        },
+    )
+
+    assert prepared["before_state"]["data"][0]["exchanger"] == "mail.example.com"
+    result = await harness.execute_action(admin, prepared["preparation_id"])
+
+    assert result.ok is True
+    assert result.verified is True
+    assert result.after_state["data"][0]["exchanger"] == (
+        "new.example-com.mail.protection.outlook.com"
+    )
+
+
+@pytest.mark.asyncio
 async def test_idempotent_prepare_returns_same_record(harness, admin) -> None:
     first = await harness.prepare_action(
         admin,
