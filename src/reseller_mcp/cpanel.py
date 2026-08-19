@@ -125,7 +125,7 @@ class CPanelClient:
                 self._failures = 0
                 self._circuit_opened_at = None
                 return result
-            except (httpx.TimeoutException, httpx.NetworkError) as exc:
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError) as exc:
                 last_error = exc
                 self._failures += 1
                 if self._failures >= 5:
