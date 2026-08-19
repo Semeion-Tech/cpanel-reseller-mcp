@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -14,6 +15,9 @@ from reseller_mcp.models import Principal, Role
 class FakeCPanel:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None, dict[str, object]]] = []
+        self.mx_changed = False
+        self.cname_target: str | None = None
+        self.txt_values: dict[str, str] = {}
 
     async def call(self, capability, account, arguments, *, retry_safe=False):
         self.calls.append((capability.id, account, arguments))
@@ -79,6 +83,53 @@ class FakeCPanel:
             return {"status": 1, "data": [{"state": "INVALID", "domain": "alpha.example"}]}
         if capability.id == "uapi.EmailAuth.validate_current_dkims":
             return {"status": 1, "data": [{"state": "MISMATCH", "domain": "alpha.example"}]}
+        if capability.id == "uapi.Email.list_mxs":
+            exchanger = (
+                "new.example-com.mail.protection.outlook.com"
+                if self.mx_changed
+                else "mail.example.com"
+            )
+            return {"status": 1, "data": [{"exchanger": exchanger, "priority": "0"}]}
+        if capability.id == "uapi.Email.change_mx":
+            self.mx_changed = True
+            return {"status": 1, "data": {"changed": True}}
+        if capability.id == "uapi.DNS.parse_zone":
+            records = []
+            if self.cname_target:
+                records.append(
+                    {
+                        "line_index": 4,
+                        "dname": "selector1._domainkey",
+                        "ttl": 3600,
+                        "record_type": "CNAME",
+                        "data": [self.cname_target],
+                    }
+                )
+            for name, value in self.txt_values.items():
+                records.append(
+                    {
+                        "line_index": 7,
+                        "dname": name,
+                        "ttl": 3600,
+                        "record_type": "TXT",
+                        "data": [value],
+                    }
+                )
+            return {"status": 1, "data": {"serial": 2026081901, "records": records}}
+        if capability.id == "uapi.DNS.mass_edit_zone":
+            if "remove" in arguments:
+                if arguments["remove"] == 4:
+                    self.cname_target = None
+                else:
+                    self.txt_values.clear()
+                return {"status": 1, "data": {"new_serial": 2026081902}}
+            encoded = arguments.get("add") or arguments.get("edit")
+            record = json.loads(str(encoded))
+            if record["record_type"] == "CNAME":
+                self.cname_target = record["data"][0]
+            if record["record_type"] == "TXT":
+                self.txt_values[record["dname"]] = record["data"][0]
+            return {"status": 1, "data": {"new_serial": 2026081902}}
         if capability.id == "uapi.Ftp.allows_anonymous_ftp":
             return {"status": 1, "data": {"allows": 0}}
         if capability.id == "uapi.LangPHP.php_get_vhost_versions":

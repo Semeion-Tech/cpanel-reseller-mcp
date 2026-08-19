@@ -90,6 +90,11 @@ ALIASES = {
     "whm.removeacct": "excluir apagar encerrar conta",
     "whm.parse_dns_zone": "dns zona registros consultar",
     "whm.mass_edit_dns_zone": "dns editar registros zona",
+    "uapi.DNS.lookup": "dns zona registros consultar localizar",
+    "uapi.DNS.parse_zone": "dns zona registros interpretar consultar",
+    "workflow.dns_cname_ensure": "dns cname alias registro adicionar atualizar microsoft dkim",
+    "workflow.dns_txt_ensure": "dns txt spf dmarc texto adicionar atualizar",
+    "workflow.dns_record_remove": "dns registro remover excluir apagar",
     "uapi.Email.list_pops": "email emails caixas postais listar",
     "uapi.Email.add_pop": "email criar caixa postal",
     "uapi.Email.delete_pop": "email excluir caixa postal",
@@ -234,7 +239,54 @@ def curated_capabilities() -> list[Capability]:
             "id": "uapi.Email.list_mxs",
             "title": "Listar roteamento MX",
             "description": "Lista os servidores MX e o modo de roteamento de e-mail da conta.",
-            "schema": _schema(),
+            "schema": _schema({"domain": string}),
+        },
+        {
+            "id": "uapi.DNS.lookup",
+            "title": "Consultar registros DNS",
+            "description": (
+                "Retorna os registros DNS publicados para um domínio pertencente à conta cPanel."
+            ),
+            "schema": _schema({"domain": string}, ["domain"]),
+            "examples": [{"domain": "example.com"}],
+        },
+        {
+            "id": "uapi.DNS.parse_zone",
+            "title": "Ler zona DNS estruturada",
+            "description": (
+                "Retorna a zona DNS parseada de um domínio pertencente à conta cPanel, "
+                "incluindo os índices necessários para uma alteração segura."
+            ),
+            "schema": _schema({"zone": string}, ["zone"]),
+            "examples": [{"zone": "example.com"}],
+        },
+        {
+            "id": "uapi.Email.change_mx",
+            "title": "Alterar registro MX",
+            "description": (
+                "Altera um registro MX existente após identificar explicitamente o registro "
+                "atual. A operação exige action_prepare e pós-validação por list_mxs."
+            ),
+            "schema": _schema(
+                {
+                    "domain": string,
+                    "exchanger": string,
+                    "oldexchanger": string,
+                    "priority": {"type": "integer", "minimum": 0},
+                    "oldpriority": {"type": "integer", "minimum": 0},
+                    "alwaysaccept": {"type": "integer", "enum": [0, 1]},
+                },
+                ["domain", "exchanger", "oldexchanger", "priority"],
+            ),
+            "examples": [
+                {
+                    "domain": "example.com",
+                    "exchanger": "example-com.mail.protection.outlook.com",
+                    "oldexchanger": "mail.example.com",
+                    "oldpriority": 0,
+                    "priority": 0,
+                }
+            ],
         },
         {
             "id": "uapi.Email.list_forwarders",
@@ -391,6 +443,95 @@ def curated_capabilities() -> list[Capability]:
                 },
                 ["database", "migration_id", "statements"],
             ),
+        },
+        {
+            "id": "workflow.dns_cname_ensure",
+            "title": "Garantir registro CNAME",
+            "description": (
+                "Adiciona ou atualiza um CNAME em uma zona DNS da conta. Lê o serial atual, "
+                "usa o fluxo tipado do cPanel e valida o CNAME depois da alteração."
+            ),
+            "schema": _schema(
+                {
+                    "zone": string,
+                    "name": string,
+                    "target": string,
+                    "ttl": {"type": "integer", "minimum": 0},
+                    "replace_existing": {"type": "boolean", "default": False},
+                },
+                ["zone", "name", "target", "ttl"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "selector1._domainkey",
+                    "target": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft",
+                    "ttl": 3600,
+                }
+            ],
+        },
+        {
+            "id": "workflow.dns_txt_ensure",
+            "title": "Garantir registro TXT",
+            "description": (
+                "Adiciona ou atualiza um TXT em uma zona DNS da conta. Permite selecionar "
+                "com segurança um registro existente por prefixo, como v=spf1."
+            ),
+            "schema": _schema(
+                {
+                    "zone": string,
+                    "name": string,
+                    "value": string,
+                    "ttl": {"type": "integer", "minimum": 0},
+                    "replace_existing": {"type": "boolean", "default": False},
+                    "match_prefix": string,
+                },
+                ["zone", "name", "value", "ttl"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "@",
+                    "value": "v=spf1 include:spf.protection.outlook.com -all",
+                    "match_prefix": "v=spf1",
+                    "replace_existing": True,
+                    "ttl": 3600,
+                },
+                {
+                    "zone": "example.com",
+                    "name": "_dmarc",
+                    "value": "v=DMARC1; p=none; rua=mailto:dmarc@example.com",
+                    "ttl": 3600,
+                },
+            ],
+        },
+        {
+            "id": "workflow.dns_record_remove",
+            "title": "Remover registro DNS",
+            "description": (
+                "Remove exatamente um registro DNS identificado por zona, nome, tipo e valor; "
+                "usa serial e índice capturados na leitura anterior e valida a remoção."
+            ),
+            "schema": _schema(
+                {
+                    "zone": string,
+                    "name": string,
+                    "record_type": {
+                        "type": "string",
+                        "enum": ["A", "AAAA", "CNAME", "TXT", "CAA", "MX", "SRV"],
+                    },
+                    "value": string,
+                },
+                ["zone", "name", "record_type", "value"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "selector1._domainkey",
+                    "record_type": "CNAME",
+                    "value": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft",
+                }
+            ],
         },
         {
             "id": "uapi.Fileman.get_file_content",

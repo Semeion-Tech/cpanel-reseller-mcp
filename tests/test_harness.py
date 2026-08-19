@@ -47,6 +47,101 @@ async def test_destructive_action_requires_exact_phrase(harness, admin) -> None:
 
 
 @pytest.mark.asyncio
+async def test_change_mx_snapshots_and_verifies_the_new_record(harness, admin) -> None:
+    prepared = await harness.prepare_action(
+        admin,
+        "uapi.Email.change_mx",
+        "acctalpha",
+        {
+            "domain": "example.com",
+            "exchanger": "new.example-com.mail.protection.outlook.com",
+            "oldexchanger": "mail.example.com",
+            "oldpriority": 0,
+            "priority": 0,
+        },
+    )
+
+    assert prepared["before_state"]["data"][0]["exchanger"] == "mail.example.com"
+    result = await harness.execute_action(
+        admin, prepared["preparation_id"], prepared["confirmation_phrase"]
+    )
+
+    assert result.ok is True
+    assert result.verified is True
+    assert result.after_state["data"][0]["exchanger"] == (
+        "new.example-com.mail.protection.outlook.com"
+    )
+
+
+@pytest.mark.asyncio
+async def test_cname_workflow_serializes_typed_plan_and_verifies(harness, admin) -> None:
+    prepared = await harness.prepare_action(
+        admin,
+        "workflow.dns_cname_ensure",
+        "acctalpha",
+        {
+            "zone": "example.com",
+            "name": "selector1._domainkey",
+            "target": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft.",
+            "ttl": 3600,
+        },
+    )
+
+    assert prepared["before_state"]["serial"] == 2026081901
+    assert prepared["before_state"]["plan"]["operation"] == "add"
+    result = await harness.execute_action(admin, prepared["preparation_id"])
+
+    assert result.ok is True
+    assert result.verified is True
+
+
+@pytest.mark.asyncio
+async def test_txt_workflow_replaces_spf_by_prefix_and_verifies(harness, admin) -> None:
+    prepared = await harness.prepare_action(
+        admin,
+        "workflow.dns_txt_ensure",
+        "acctalpha",
+        {
+            "zone": "example.com",
+            "name": "@",
+            "value": "v=spf1 include:spf.protection.outlook.com -all",
+            "match_prefix": "v=spf1",
+            "replace_existing": True,
+            "ttl": 3600,
+        },
+    )
+
+    assert prepared["before_state"]["plan"]["operation"] == "add"
+    result = await harness.execute_action(admin, prepared["preparation_id"])
+
+    assert result.ok is True
+    assert result.verified is True
+
+
+@pytest.mark.asyncio
+async def test_dns_record_remove_requires_exact_record_and_verifies(harness, admin) -> None:
+    harness.cpanel.cname_target = "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft"
+    prepared = await harness.prepare_action(
+        admin,
+        "workflow.dns_record_remove",
+        "acctalpha",
+        {
+            "zone": "example.com",
+            "name": "selector1._domainkey",
+            "record_type": "CNAME",
+            "value": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft",
+        },
+    )
+
+    result = await harness.execute_action(
+        admin, prepared["preparation_id"], prepared["confirmation_phrase"]
+    )
+
+    assert result.ok is True
+    assert result.verified is True
+
+
+@pytest.mark.asyncio
 async def test_idempotent_prepare_returns_same_record(harness, admin) -> None:
     first = await harness.prepare_action(
         admin,
