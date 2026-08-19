@@ -232,7 +232,12 @@ class DNSWorkflows:
         return any(
             self._canonical_name(record["name"]) == self._canonical_name(requested["dname"])
             and record["record_type"].upper() == record_type
-            and record["data"] == requested["data"]
+            and (
+                [self._canonical_name(record["data"][0])]
+                == [self._canonical_name(requested["data"][0])]
+                if record_type == "CNAME"
+                else record["data"] == requested["data"]
+            )
             and record["ttl"] == requested["ttl"]
             for record in self._records(zone)
         )

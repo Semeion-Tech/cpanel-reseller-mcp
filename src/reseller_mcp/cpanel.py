@@ -174,7 +174,7 @@ class CPanelClient:
             response = await self._client.post(
                 endpoint,
                 headers=headers,
-                data={key: value for key, value in _query_items(params)},
+                params=_query_items(params),
             )
         else:
             response = await self._client.get(

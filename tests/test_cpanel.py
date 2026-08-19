@@ -42,7 +42,7 @@ async def test_uapi_mutations_use_post_form_data(settings) -> None:
 
     async def handler(request: httpx.Request) -> httpx.Response:
         seen["method"] = request.method
-        seen["body"] = request.content
+        seen["url"] = request.url
         return httpx.Response(
             200,
             json={
@@ -74,6 +74,6 @@ async def test_uapi_mutations_use_post_form_data(settings) -> None:
     )
 
     assert seen["method"] == "POST"
-    assert b"cpanel.function=mass_edit_zone" in seen["body"]
-    assert b"add=%7B%22record_type%22%3A%22TXT%22%7D" in seen["body"]
+    assert b"cpanel.function=mass_edit_zone" in str(seen.get("url")).encode()
+    assert b"add=%7B%22record_type%22%3A%22TXT%22%7D" in str(seen.get("url")).encode()
     await client.close()
