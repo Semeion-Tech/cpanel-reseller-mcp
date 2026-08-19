@@ -55,3 +55,7 @@ def test_dns_and_mx_capabilities_have_typed_contracts(tmp_path) -> None:
     assert mx_schema["required"] == ["domain", "exchanger", "oldexchanger", "priority"]
     assert mx_schema["additionalProperties"] is False
     assert mx_schema["properties"]["priority"] == {"type": "integer", "minimum": 0}
+
+    cname_schema = capabilities["workflow.dns_cname_ensure"].input_schema
+    assert cname_schema["required"] == ["zone", "name", "target", "ttl"]
+    assert cname_schema["additionalProperties"] is False

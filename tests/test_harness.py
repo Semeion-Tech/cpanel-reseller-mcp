@@ -72,6 +72,28 @@ async def test_change_mx_snapshots_and_verifies_the_new_record(harness, admin) -
 
 
 @pytest.mark.asyncio
+async def test_cname_workflow_serializes_typed_plan_and_verifies(harness, admin) -> None:
+    prepared = await harness.prepare_action(
+        admin,
+        "workflow.dns_cname_ensure",
+        "acctalpha",
+        {
+            "zone": "example.com",
+            "name": "selector1._domainkey",
+            "target": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft.",
+            "ttl": 3600,
+        },
+    )
+
+    assert prepared["before_state"]["serial"] == 2026081901
+    assert prepared["before_state"]["plan"]["operation"] == "add"
+    result = await harness.execute_action(admin, prepared["preparation_id"])
+
+    assert result.ok is True
+    assert result.verified is True
+
+
+@pytest.mark.asyncio
 async def test_idempotent_prepare_returns_same_record(harness, admin) -> None:
     first = await harness.prepare_action(
         admin,

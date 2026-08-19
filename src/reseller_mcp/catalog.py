@@ -92,6 +92,7 @@ ALIASES = {
     "whm.mass_edit_dns_zone": "dns editar registros zona",
     "uapi.DNS.lookup": "dns zona registros consultar localizar",
     "uapi.DNS.parse_zone": "dns zona registros interpretar consultar",
+    "workflow.dns_cname_ensure": "dns cname alias registro adicionar atualizar microsoft dkim",
     "uapi.Email.list_pops": "email emails caixas postais listar",
     "uapi.Email.add_pop": "email criar caixa postal",
     "uapi.Email.delete_pop": "email excluir caixa postal",
@@ -440,6 +441,32 @@ def curated_capabilities() -> list[Capability]:
                 },
                 ["database", "migration_id", "statements"],
             ),
+        },
+        {
+            "id": "workflow.dns_cname_ensure",
+            "title": "Garantir registro CNAME",
+            "description": (
+                "Adiciona ou atualiza um CNAME em uma zona DNS da conta. Lê o serial atual, "
+                "usa o fluxo tipado do cPanel e valida o CNAME depois da alteração."
+            ),
+            "schema": _schema(
+                {
+                    "zone": string,
+                    "name": string,
+                    "target": string,
+                    "ttl": {"type": "integer", "minimum": 0},
+                    "replace_existing": {"type": "boolean", "default": False},
+                },
+                ["zone", "name", "target", "ttl"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "selector1._domainkey",
+                    "target": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft",
+                    "ttl": 3600,
+                }
+            ],
         },
         {
             "id": "uapi.Fileman.get_file_content",

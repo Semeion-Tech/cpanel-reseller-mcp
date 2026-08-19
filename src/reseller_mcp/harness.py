@@ -18,6 +18,7 @@ from .config import Settings
 from .cpanel import CPanelClient, CPanelError
 from .database_workflows import DatabaseWorkflows
 from .db import Database
+from .dns_workflows import DNSWorkflows
 from .models import (
     ApiFamily,
     Capability,
@@ -71,6 +72,7 @@ class Harness:
             str, Callable[[Preparation], Awaitable[dict[str, Any]]]
         ] = {}
         self.database = DatabaseWorkflows(self)
+        self.dns = DNSWorkflows(self)
         self._workflow_query_hooks["database.query_readonly"] = self.database.query_readonly
         self._workflow_prepare_hooks["database.transaction_execute"] = (
             self.database.prepare_transaction
@@ -84,6 +86,8 @@ class Harness:
         self._workflow_execute_hooks["workflow.database_migration_apply"] = (
             self.database.execute_migration
         )
+        self._workflow_prepare_hooks["workflow.dns_cname_ensure"] = self.dns.prepare_cname
+        self._workflow_execute_hooks["workflow.dns_cname_ensure"] = self.dns.execute_cname
         self.metrics = OperationMetrics()
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._background_tasks: set[asyncio.Task[None]] = set()

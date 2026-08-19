@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -15,6 +16,7 @@ class FakeCPanel:
     def __init__(self) -> None:
         self.calls: list[tuple[str, str | None, dict[str, object]]] = []
         self.mx_changed = False
+        self.cname_target: str | None = None
 
     async def call(self, capability, account, arguments, *, retry_safe=False):
         self.calls.append((capability.id, account, arguments))
@@ -90,6 +92,24 @@ class FakeCPanel:
         if capability.id == "uapi.Email.change_mx":
             self.mx_changed = True
             return {"status": 1, "data": {"changed": True}}
+        if capability.id == "uapi.DNS.parse_zone":
+            records = []
+            if self.cname_target:
+                records.append(
+                    {
+                        "line_index": 4,
+                        "dname": "selector1._domainkey",
+                        "ttl": 3600,
+                        "record_type": "CNAME",
+                        "data": [self.cname_target],
+                    }
+                )
+            return {"status": 1, "data": {"serial": 2026081901, "records": records}}
+        if capability.id == "uapi.DNS.mass_edit_zone":
+            encoded = arguments.get("add") or arguments.get("edit")
+            record = json.loads(str(encoded))
+            self.cname_target = record["data"][0]
+            return {"status": 1, "data": {"new_serial": 2026081902}}
         if capability.id == "uapi.Ftp.allows_anonymous_ftp":
             return {"status": 1, "data": {"allows": 0}}
         if capability.id == "uapi.LangPHP.php_get_vhost_versions":
