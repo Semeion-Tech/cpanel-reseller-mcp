@@ -773,9 +773,7 @@ class Harness:
             target = str(arguments.get("exchanger", "")).rstrip(".").casefold()
             expected_priority = int(arguments["priority"])
             return any(
-                str(item.get("exchanger", item.get("exchange", "")))
-                .rstrip(".")
-                .casefold()
+                str(item.get("exchanger", item.get("exchange", ""))).rstrip(".").casefold()
                 == target
                 and Harness._coerce_int(item.get("priority")) == expected_priority
                 for item in records

@@ -165,8 +165,7 @@ class DNSWorkflows:
         after = await self._read_zone(account, str(before["zone"]))
         removed = before["plan"]["record"]
         verified = not any(
-            self._canonical_name(record["name"])
-            == self._canonical_name(removed["name"])
+            self._canonical_name(record["name"]) == self._canonical_name(removed["name"])
             and record["record_type"].upper() == removed["record_type"].upper()
             and record["data"] == removed["data"]
             for record in self._records(after)
@@ -216,9 +215,7 @@ class DNSWorkflows:
             "after_state": after,
             "verified": verified,
             "warnings": (
-                []
-                if verified
-                else [f"{record_type} postcondition did not match requested state"]
+                [] if verified else [f"{record_type} postcondition did not match requested state"]
             ),
         }
 
