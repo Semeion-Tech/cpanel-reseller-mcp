@@ -202,16 +202,23 @@ class DNSWorkflows:
         else:
             record = {"line_index": plan["line_index"], **plan["record"]}
             payload["edit"] = json.dumps(record, separators=(",", ":"))
-        result = await self.harness.cpanel.call(operation, account, payload, retry_safe=False)
+        try:
+            result = await self.harness.cpanel.call(operation, account, payload, retry_safe=False)
+        except CPanelError as exc:
+            if exc.code != "UPSTREAM_NETWORK_ERROR":
+                raise
+            reconciled = await self._read_zone(account, str(before["zone"]))
+            if self._has_requested_record(reconciled, plan["record"], record_type):
+                return {
+                    "data": {"changed": True, "reconciled_after_transport_error": True},
+                    "after_state": reconciled,
+                    "verified": True,
+                    "warnings": ["DNS write response was lost; state was reconciled from cPanel"],
+                }
+            result = await self.harness.cpanel.call(operation, account, payload, retry_safe=False)
         after = await self._read_zone(account, str(before["zone"]))
         requested = plan["record"]
-        verified = any(
-            self._canonical_name(record["name"]) == self._canonical_name(requested["dname"])
-            and record["record_type"].upper() == record_type
-            and record["data"] == requested["data"]
-            and record["ttl"] == requested["ttl"]
-            for record in self._records(after)
-        )
+        verified = self._has_requested_record(after, requested, record_type)
         return {
             "data": result,
             "after_state": after,
@@ -220,6 +227,15 @@ class DNSWorkflows:
                 [] if verified else [f"{record_type} postcondition did not match requested state"]
             ),
         }
+
+    def _has_requested_record(self, zone: Any, requested: dict[str, Any], record_type: str) -> bool:
+        return any(
+            self._canonical_name(record["name"]) == self._canonical_name(requested["dname"])
+            and record["record_type"].upper() == record_type
+            and record["data"] == requested["data"]
+            and record["ttl"] == requested["ttl"]
+            for record in self._records(zone)
+        )
 
     async def _read_zone(self, account: str | None, zone: str) -> Any:
         capability = self.harness._get_capability("uapi.DNS.parse_zone")
