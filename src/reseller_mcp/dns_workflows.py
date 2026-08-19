@@ -156,35 +156,59 @@ class DNSWorkflows:
 
     async def execute_remove(self, preparation: Preparation) -> dict[str, Any]:
         account = preparation.account
-        before = preparation.before_state or {}
         operation = self._mass_edit_capability()
-        payload = {
-            "zone": before["zone"],
-            "serial": before["serial"],
-            "remove": before["plan"]["line_index"],
-        }
-        result = await self.harness.cpanel.call(operation, account, payload, retry_safe=False)
-        after = await self._read_zone(account, str(before["zone"]))
-        removed = before["plan"]["record"]
-        verified = not any(
-            self._canonical_name(record["name"]) == self._canonical_name(removed["name"])
-            and record["record_type"].upper() == removed["record_type"].upper()
-            and record["data"] == removed["data"]
-            for record in self._records(after)
-        )
-        return {
-            "data": result,
-            "after_state": after,
-            "verified": verified,
-            "warnings": [] if verified else ["DNS record removal was not verified"],
-        }
+        before = preparation.before_state or {}
+        current = before
+        for attempt in range(2):
+            removed = current["plan"]["record"]
+            payload = {
+                "zone": current["zone"],
+                "serial": current["serial"],
+                "remove": current["plan"]["line_index"],
+            }
+            try:
+                result = await self.harness.cpanel.call(
+                    operation, account, payload, retry_safe=False
+                )
+            except CPanelError as exc:
+                if exc.code != "UPSTREAM_NETWORK_ERROR":
+                    raise
+                after = await self._read_after_ambiguous_write(account, str(current["zone"]))
+                if not self._has_record(after, removed):
+                    return {
+                        "data": {"changed": True, "reconciled_after_transport_error": True},
+                        "after_state": after,
+                        "verified": True,
+                        "warnings": [
+                            "DNS removal response was lost; state was reconciled from cPanel"
+                        ],
+                    }
+                if attempt == 1:
+                    raise self._unknown_write_error(attempt + 1) from exc
+                current = await self._refresh_remove_plan(preparation)
+                continue
+
+            try:
+                after = await self._read_zone(account, str(current["zone"]))
+            except CPanelError as exc:
+                if exc.code != "UPSTREAM_NETWORK_ERROR":
+                    raise
+                raise self._unknown_write_error(attempt + 1) from exc
+            verified = not self._has_record(after, removed)
+            return {
+                "data": result,
+                "after_state": after,
+                "verified": verified,
+                "warnings": [] if verified else ["DNS record removal was not verified"],
+            }
+        raise self._unknown_write_error(2)
 
     async def _execute_record(self, preparation: Preparation, record_type: str) -> dict[str, Any]:
         account = preparation.account
-        before = preparation.before_state or {}
-        plan = before.get("plan", {})
+        current = preparation.before_state or {}
+        plan = current.get("plan", {})
         if plan.get("operation") == "noop":
-            after = await self._read_zone(account, str(before["zone"]))
+            after = await self._read_zone(account, str(current["zone"]))
             return {
                 "data": {"changed": False, "reason": plan["reason"]},
                 "after_state": after,
@@ -193,40 +217,110 @@ class DNSWorkflows:
             }
 
         operation = self._mass_edit_capability()
-        payload: dict[str, Any] = {
-            "zone": before["zone"],
-            "serial": before["serial"],
-        }
+        for attempt in range(2):
+            plan = current["plan"]
+            if plan.get("operation") == "noop":
+                after = await self._read_zone(account, str(current["zone"]))
+                return {
+                    "data": {"changed": False, "reason": plan["reason"]},
+                    "after_state": after,
+                    "verified": True,
+                    "warnings": [],
+                }
+            payload = self._record_payload(current)
+            requested = plan["record"]
+            try:
+                result = await self.harness.cpanel.call(
+                    operation, account, payload, retry_safe=False
+                )
+            except CPanelError as exc:
+                if exc.code != "UPSTREAM_NETWORK_ERROR":
+                    raise
+                reconciled = await self._read_after_ambiguous_write(account, str(current["zone"]))
+                if self._has_requested_record(reconciled, requested, record_type):
+                    return {
+                        "data": {"changed": True, "reconciled_after_transport_error": True},
+                        "after_state": reconciled,
+                        "verified": True,
+                        "warnings": [
+                            "DNS write response was lost; state was reconciled from cPanel"
+                        ],
+                    }
+                if attempt == 1:
+                    raise self._unknown_write_error(attempt + 1) from exc
+                current = await self._refresh_record_plan(preparation, record_type)
+                continue
+
+            try:
+                after = await self._read_zone(account, str(current["zone"]))
+            except CPanelError as exc:
+                if exc.code != "UPSTREAM_NETWORK_ERROR":
+                    raise
+                raise self._unknown_write_error(attempt + 1) from exc
+            verified = self._has_requested_record(after, requested, record_type)
+            return {
+                "data": result,
+                "after_state": after,
+                "verified": verified,
+                "warnings": (
+                    []
+                    if verified
+                    else [f"{record_type} postcondition did not match requested state"]
+                ),
+            }
+        raise self._unknown_write_error(2)
+
+    @staticmethod
+    def _record_payload(state: dict[str, Any]) -> dict[str, Any]:
+        plan = state["plan"]
+        payload: dict[str, Any] = {"zone": state["zone"], "serial": state["serial"]}
         if plan["operation"] == "add":
             payload["add"] = json.dumps(plan["record"], separators=(",", ":"))
         else:
             record = {"line_index": plan["line_index"], **plan["record"]}
             payload["edit"] = json.dumps(record, separators=(",", ":"))
+        return payload
+
+    async def _refresh_record_plan(
+        self, preparation: Preparation, record_type: str
+    ) -> dict[str, Any]:
+        if record_type == "CNAME":
+            return await self.prepare_cname(preparation.account, preparation.arguments)
+        return await self.prepare_txt(preparation.account, preparation.arguments)
+
+    async def _refresh_remove_plan(self, preparation: Preparation) -> dict[str, Any]:
+        return await self.prepare_remove(preparation.account, preparation.arguments)
+
+    async def _read_after_ambiguous_write(self, account: str | None, zone: str) -> Any:
         try:
-            result = await self.harness.cpanel.call(operation, account, payload, retry_safe=False)
+            return await self._read_zone(account, zone)
         except CPanelError as exc:
             if exc.code != "UPSTREAM_NETWORK_ERROR":
                 raise
-            reconciled = await self._read_zone(account, str(before["zone"]))
-            if self._has_requested_record(reconciled, plan["record"], record_type):
-                return {
-                    "data": {"changed": True, "reconciled_after_transport_error": True},
-                    "after_state": reconciled,
-                    "verified": True,
-                    "warnings": ["DNS write response was lost; state was reconciled from cPanel"],
-                }
-            result = await self.harness.cpanel.call(operation, account, payload, retry_safe=False)
-        after = await self._read_zone(account, str(before["zone"]))
-        requested = plan["record"]
-        verified = self._has_requested_record(after, requested, record_type)
-        return {
-            "data": result,
-            "after_state": after,
-            "verified": verified,
-            "warnings": (
-                [] if verified else [f"{record_type} postcondition did not match requested state"]
-            ),
-        }
+            raise self._unknown_write_error(1) from exc
+
+    @staticmethod
+    def _unknown_write_error(attempts: int) -> CPanelError:
+        return CPanelError(
+            "DNS write outcome could not be reconciled",
+            code="DNS_WRITE_STATE_UNKNOWN",
+            details={"state_unknown": True, "write_attempts": attempts},
+            retryable=False,
+            hint="Read the authoritative DNS zone before retrying the write.",
+        )
+
+    def _has_record(self, zone: Any, removed: dict[str, Any]) -> bool:
+        return any(
+            self._canonical_name(record["name"]) == self._canonical_name(removed["name"])
+            and record["record_type"].upper() == removed["record_type"].upper()
+            and (
+                [self._canonical_name(record["data"][0])]
+                == [self._canonical_name(removed["data"][0])]
+                if record["record_type"].upper() == "CNAME"
+                else record["data"] == removed["data"]
+            )
+            for record in self._records(zone)
+        )
 
     def _has_requested_record(self, zone: Any, requested: dict[str, Any], record_type: str) -> bool:
         return any(
