@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import base64
+import binascii
 import json
 from typing import TYPE_CHECKING, Any
 
@@ -252,6 +254,18 @@ class DNSWorkflows:
     def _serial(value: Any) -> int:
         found = DNSWorkflows._find_key(value, "serial")
         if found is None:
+            found = DNSWorkflows._find_key(value, "serial_b64")
+            if found is not None:
+                found = DNSWorkflows._decode_b64(found)
+        if found is None:
+            for item in DNSWorkflows._walk(value):
+                if str(item.get("record_type", "")).upper() != "SOA":
+                    continue
+                data = DNSWorkflows._decoded_data(item)
+                if len(data) >= 3:
+                    found = data[2]
+                    break
+        if found is None:
             raise CPanelError(
                 "the parsed DNS zone did not include its current serial",
                 code="DNS_SERIAL_UNAVAILABLE",
@@ -270,9 +284,9 @@ class DNSWorkflows:
     def _records(value: Any) -> list[dict[str, Any]]:
         records: list[dict[str, Any]] = []
         for item in DNSWorkflows._walk(value):
-            name = item.get("dname", item.get("name"))
+            name = item.get("dname", item.get("name", item.get("dname_raw")))
             record_type = item.get("record_type", item.get("type"))
-            data = item.get("data")
+            data = DNSWorkflows._decoded_data(item)
             if not isinstance(name, str) or not isinstance(record_type, str):
                 continue
             if isinstance(data, str):
@@ -291,6 +305,25 @@ class DNSWorkflows:
                 record["line_index"] = item["line_index"]
             records.append(record)
         return records
+
+    @staticmethod
+    def _decoded_data(item: dict[str, Any]) -> Any:
+        data = item.get("data")
+        if data is not None:
+            return data
+        encoded = item.get("data_b64")
+        if not isinstance(encoded, list):
+            return None
+        return [DNSWorkflows._decode_b64(value) for value in encoded]
+
+    @staticmethod
+    def _decode_b64(value: Any) -> Any:
+        if not isinstance(value, str):
+            return value
+        try:
+            return base64.b64decode(value, validate=True).decode("utf-8")
+        except (ValueError, UnicodeDecodeError, binascii.Error):
+            return value
 
     @staticmethod
     def _walk(value: Any) -> list[dict[str, Any]]:

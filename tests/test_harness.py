@@ -1,9 +1,11 @@
 from __future__ import annotations
 
 import asyncio
+import base64
 
 import pytest
 
+from reseller_mcp.dns_workflows import DNSWorkflows
 from reseller_mcp.harness import HarnessError
 from reseller_mcp.models import (
     ApiFamily,
@@ -14,6 +16,50 @@ from reseller_mcp.models import (
     Role,
 )
 from reseller_mcp.mysql_client import MySQLProvisionError
+
+
+def test_dns_workflow_decodes_cpanel_parsed_zone_fields() -> None:
+    def encoded(value: str) -> str:
+        return base64.b64encode(value.encode()).decode()
+
+    zone = {
+        "data": [
+            {
+                "record_type": "SOA",
+                "data_b64": [
+                    encoded("ns1.example."),
+                    encoded("hostmaster.example."),
+                    encoded("2026081900"),
+                ],
+                "dname_raw": "example.com.",
+                "ttl": 86400,
+            },
+            {
+                "record_type": "TXT",
+                "data_b64": [encoded("v=spf1 include:spf.protection.outlook.com -all")],
+                "dname_raw": "example.com.",
+                "line_index": 17,
+                "ttl": 3600,
+            },
+        ]
+    }
+
+    assert DNSWorkflows._serial(zone) == 2026081900
+    assert DNSWorkflows._records(zone) == [
+        {
+            "name": "example.com.",
+            "record_type": "SOA",
+            "data": ["ns1.example.", "hostmaster.example.", "2026081900"],
+            "ttl": 86400,
+        },
+        {
+            "name": "example.com.",
+            "record_type": "TXT",
+            "data": ["v=spf1 include:spf.protection.outlook.com -all"],
+            "ttl": 3600,
+            "line_index": 17,
+        },
+    ]
 
 
 @pytest.mark.asyncio
