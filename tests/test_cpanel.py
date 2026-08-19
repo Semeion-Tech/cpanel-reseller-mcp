@@ -34,6 +34,8 @@ async def test_remote_protocol_error_is_normalized_as_retryable_upstream_error(s
     assert error.value.code == "UPSTREAM_NETWORK_ERROR"
     assert error.value.retryable is True
     await client.close()
+
+
 @pytest.mark.asyncio
 async def test_uapi_mutations_use_post_form_data(settings) -> None:
     seen: dict[str, object] = {}
