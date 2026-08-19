@@ -93,6 +93,8 @@ ALIASES = {
     "uapi.DNS.lookup": "dns zona registros consultar localizar",
     "uapi.DNS.parse_zone": "dns zona registros interpretar consultar",
     "workflow.dns_cname_ensure": "dns cname alias registro adicionar atualizar microsoft dkim",
+    "workflow.dns_txt_ensure": "dns txt spf dmarc texto adicionar atualizar",
+    "workflow.dns_record_remove": "dns registro remover excluir apagar",
     "uapi.Email.list_pops": "email emails caixas postais listar",
     "uapi.Email.add_pop": "email criar caixa postal",
     "uapi.Email.delete_pop": "email excluir caixa postal",
@@ -465,6 +467,69 @@ def curated_capabilities() -> list[Capability]:
                     "name": "selector1._domainkey",
                     "target": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft",
                     "ttl": 3600,
+                }
+            ],
+        },
+        {
+            "id": "workflow.dns_txt_ensure",
+            "title": "Garantir registro TXT",
+            "description": (
+                "Adiciona ou atualiza um TXT em uma zona DNS da conta. Permite selecionar "
+                "com segurança um registro existente por prefixo, como v=spf1."
+            ),
+            "schema": _schema(
+                {
+                    "zone": string,
+                    "name": string,
+                    "value": string,
+                    "ttl": {"type": "integer", "minimum": 0},
+                    "replace_existing": {"type": "boolean", "default": False},
+                    "match_prefix": string,
+                },
+                ["zone", "name", "value", "ttl"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "@",
+                    "value": "v=spf1 include:spf.protection.outlook.com -all",
+                    "match_prefix": "v=spf1",
+                    "replace_existing": True,
+                    "ttl": 3600,
+                },
+                {
+                    "zone": "example.com",
+                    "name": "_dmarc",
+                    "value": "v=DMARC1; p=none; rua=mailto:dmarc@example.com",
+                    "ttl": 3600,
+                },
+            ],
+        },
+        {
+            "id": "workflow.dns_record_remove",
+            "title": "Remover registro DNS",
+            "description": (
+                "Remove exatamente um registro DNS identificado por zona, nome, tipo e valor; "
+                "usa serial e índice capturados na leitura anterior e valida a remoção."
+            ),
+            "schema": _schema(
+                {
+                    "zone": string,
+                    "name": string,
+                    "record_type": {
+                        "type": "string",
+                        "enum": ["A", "AAAA", "CNAME", "TXT", "CAA", "MX", "SRV"],
+                    },
+                    "value": string,
+                },
+                ["zone", "name", "record_type", "value"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "selector1._domainkey",
+                    "record_type": "CNAME",
+                    "value": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft",
                 }
             ],
         },

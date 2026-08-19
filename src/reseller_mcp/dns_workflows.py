@@ -50,16 +50,135 @@ class DNSWorkflows:
             plan = {
                 "operation": "edit",
                 "line_index": matching[0]["line_index"],
-                "record": self._record(name, int(arguments["ttl"]), target),
+                "record": self._record(name, int(arguments["ttl"]), "CNAME", [target]),
             }
         else:
             plan = {
                 "operation": "add",
-                "record": self._record(name, int(arguments["ttl"]), target),
+                "record": self._record(name, int(arguments["ttl"]), "CNAME", [target]),
             }
         return {"zone": zone, "serial": self._serial(current), "records": records, "plan": plan}
 
     async def execute_cname(self, preparation: Preparation) -> dict[str, Any]:
+        return await self._execute_record(preparation, "CNAME")
+
+    async def prepare_txt(self, account: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
+        if not account:
+            raise CPanelError("DNS workflows require an account", code="ACCOUNT_REQUIRED")
+        zone = str(arguments["zone"])
+        name = self._canonical_name(str(arguments["name"]))
+        value = str(arguments["value"])
+        current = await self._read_zone(account, zone)
+        records = self._records(current)
+        matching = [
+            record
+            for record in records
+            if self._canonical_name(record["name"]) == name
+            and record["record_type"].upper() == "TXT"
+        ]
+        same_value = [record for record in matching if record["data"] == [value]]
+        plan: dict[str, Any]
+        if same_value:
+            plan = {"operation": "noop", "reason": "TXT already has the requested value"}
+        else:
+            prefix = arguments.get("match_prefix")
+            candidates = (
+                [record for record in matching if record["data"][0].startswith(str(prefix))]
+                if prefix
+                else matching
+            )
+            if len(candidates) > 1 or (matching and not candidates):
+                raise CPanelError(
+                    "the TXT record is ambiguous; provide match_prefix",
+                    code="DNS_TXT_RECORD_AMBIGUOUS",
+                    category="validation",
+                )
+            if candidates:
+                line_index = candidates[0].get("line_index")
+                if line_index is None:
+                    raise CPanelError(
+                        "the existing TXT record has no line index",
+                        code="DNS_RECORD_NOT_EDITABLE",
+                        category="validation",
+                    )
+                plan = {
+                    "operation": "edit",
+                    "line_index": line_index,
+                    "record": self._record(name, int(arguments["ttl"]), "TXT", [value]),
+                }
+            elif matching and not arguments.get("replace_existing", False):
+                raise CPanelError(
+                    "a TXT record already exists; set replace_existing and match_prefix",
+                    code="DNS_RECORD_CONFLICT",
+                    category="validation",
+                )
+            else:
+                plan = {
+                    "operation": "add",
+                    "record": self._record(name, int(arguments["ttl"]), "TXT", [value]),
+                }
+        return {"zone": zone, "serial": self._serial(current), "records": records, "plan": plan}
+
+    async def execute_txt(self, preparation: Preparation) -> dict[str, Any]:
+        return await self._execute_record(preparation, "TXT")
+
+    async def prepare_remove(
+        self, account: str | None, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        if not account:
+            raise CPanelError("DNS workflows require an account", code="ACCOUNT_REQUIRED")
+        zone = str(arguments["zone"])
+        name = self._canonical_name(str(arguments["name"]))
+        record_type = str(arguments["record_type"]).upper()
+        value = str(arguments["value"])
+        current = await self._read_zone(account, zone)
+        matches = [
+            record
+            for record in self._records(current)
+            if self._canonical_name(record["name"]) == name
+            and record["record_type"].upper() == record_type
+            and record["data"] == [value]
+        ]
+        if len(matches) != 1 or matches[0].get("line_index") is None:
+            raise CPanelError(
+                "the DNS record is not uniquely removable",
+                code="DNS_RECORD_NOT_UNIQUE",
+                category="validation",
+            )
+        return {
+            "zone": zone,
+            "serial": self._serial(current),
+            "records": self._records(current),
+            "plan": {"line_index": matches[0]["line_index"], "record": matches[0]},
+        }
+
+    async def execute_remove(self, preparation: Preparation) -> dict[str, Any]:
+        account = preparation.account
+        before = preparation.before_state or {}
+        operation = self._mass_edit_capability()
+        payload = {
+            "zone": before["zone"],
+            "serial": before["serial"],
+            "remove": before["plan"]["line_index"],
+        }
+        result = await self.harness.cpanel.call(operation, account, payload, retry_safe=False)
+        after = await self._read_zone(account, str(before["zone"]))
+        removed = before["plan"]["record"]
+        verified = not any(
+            self._canonical_name(record["name"])
+            == self._canonical_name(removed["name"])
+            and record["record_type"].upper() == removed["record_type"].upper()
+            and record["data"] == removed["data"]
+            for record in self._records(after)
+        )
+        return {
+            "data": result,
+            "after_state": after,
+            "verified": verified,
+            "warnings": [] if verified else ["DNS record removal was not verified"],
+        }
+
+    async def _execute_record(self, preparation: Preparation, record_type: str) -> dict[str, Any]:
         account = preparation.account
         before = preparation.before_state or {}
         plan = before.get("plan", {})
@@ -87,9 +206,8 @@ class DNSWorkflows:
         requested = plan["record"]
         verified = any(
             self._canonical_name(record["name"]) == self._canonical_name(requested["dname"])
-            and record["record_type"].upper() == "CNAME"
-            and self._canonical_name(record["data"][0])
-            == self._canonical_name(requested["data"][0])
+            and record["record_type"].upper() == record_type
+            and record["data"] == requested["data"]
             and record["ttl"] == requested["ttl"]
             for record in self._records(after)
         )
@@ -97,7 +215,11 @@ class DNSWorkflows:
             "data": result,
             "after_state": after,
             "verified": verified,
-            "warnings": [] if verified else ["CNAME postcondition did not match requested state"],
+            "warnings": (
+                []
+                if verified
+                else [f"{record_type} postcondition did not match requested state"]
+            ),
         }
 
     async def _read_zone(self, account: str | None, zone: str) -> Any:
@@ -122,8 +244,8 @@ class DNSWorkflows:
         )
 
     @staticmethod
-    def _record(name: str, ttl: int, target: str) -> dict[str, Any]:
-        return {"dname": name, "ttl": ttl, "record_type": "CNAME", "data": [target]}
+    def _record(name: str, ttl: int, record_type: str, data: list[str]) -> dict[str, Any]:
+        return {"dname": name, "ttl": ttl, "record_type": record_type, "data": data}
 
     @staticmethod
     def _canonical_name(value: str) -> str:

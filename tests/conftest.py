@@ -17,6 +17,7 @@ class FakeCPanel:
         self.calls: list[tuple[str, str | None, dict[str, object]]] = []
         self.mx_changed = False
         self.cname_target: str | None = None
+        self.txt_values: dict[str, str] = {}
 
     async def call(self, capability, account, arguments, *, retry_safe=False):
         self.calls.append((capability.id, account, arguments))
@@ -104,11 +105,30 @@ class FakeCPanel:
                         "data": [self.cname_target],
                     }
                 )
+            for name, value in self.txt_values.items():
+                records.append(
+                    {
+                        "line_index": 7,
+                        "dname": name,
+                        "ttl": 3600,
+                        "record_type": "TXT",
+                        "data": [value],
+                    }
+                )
             return {"status": 1, "data": {"serial": 2026081901, "records": records}}
         if capability.id == "uapi.DNS.mass_edit_zone":
+            if "remove" in arguments:
+                if arguments["remove"] == 4:
+                    self.cname_target = None
+                else:
+                    self.txt_values.clear()
+                return {"status": 1, "data": {"new_serial": 2026081902}}
             encoded = arguments.get("add") or arguments.get("edit")
             record = json.loads(str(encoded))
-            self.cname_target = record["data"][0]
+            if record["record_type"] == "CNAME":
+                self.cname_target = record["data"][0]
+            if record["record_type"] == "TXT":
+                self.txt_values[record["dname"]] = record["data"][0]
             return {"status": 1, "data": {"new_serial": 2026081902}}
         if capability.id == "uapi.Ftp.allows_anonymous_ftp":
             return {"status": 1, "data": {"allows": 0}}

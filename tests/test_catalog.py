@@ -59,3 +59,11 @@ def test_dns_and_mx_capabilities_have_typed_contracts(tmp_path) -> None:
     cname_schema = capabilities["workflow.dns_cname_ensure"].input_schema
     assert cname_schema["required"] == ["zone", "name", "target", "ttl"]
     assert cname_schema["additionalProperties"] is False
+
+    txt_schema = capabilities["workflow.dns_txt_ensure"].input_schema
+    assert txt_schema["required"] == ["zone", "name", "value", "ttl"]
+    assert txt_schema["additionalProperties"] is False
+
+    remove_schema = capabilities["workflow.dns_record_remove"].input_schema
+    assert remove_schema["required"] == ["zone", "name", "record_type", "value"]
+    assert remove_schema["additionalProperties"] is False

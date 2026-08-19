@@ -88,6 +88,10 @@ class Harness:
         )
         self._workflow_prepare_hooks["workflow.dns_cname_ensure"] = self.dns.prepare_cname
         self._workflow_execute_hooks["workflow.dns_cname_ensure"] = self.dns.execute_cname
+        self._workflow_prepare_hooks["workflow.dns_txt_ensure"] = self.dns.prepare_txt
+        self._workflow_execute_hooks["workflow.dns_txt_ensure"] = self.dns.execute_txt
+        self._workflow_prepare_hooks["workflow.dns_record_remove"] = self.dns.prepare_remove
+        self._workflow_execute_hooks["workflow.dns_record_remove"] = self.dns.execute_remove
         self.metrics = OperationMetrics()
         self._locks: defaultdict[str, asyncio.Lock] = defaultdict(asyncio.Lock)
         self._background_tasks: set[asyncio.Task[None]] = set()
