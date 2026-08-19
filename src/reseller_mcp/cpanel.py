@@ -168,9 +168,9 @@ class CPanelClient:
             Risk.DESTRUCTIVE,
             Risk.PRIVILEGED,
         }:
-            # cPanel accepts UAPI parameters as form data on POST.  Keep
-            # reads on GET, but avoid putting mutation payloads (notably
-            # DNS mass_edit_zone JSON) in a URL query string.
+            # cPanel accepts UAPI mutation parameters on POST query strings.
+            # Keep reads on GET while avoiding the connection failures seen
+            # with mutation requests sent as GET.
             response = await self._client.post(
                 endpoint,
                 headers=headers,
