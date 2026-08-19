@@ -84,6 +84,7 @@ def _query_items(values: dict[str, Any]) -> list[tuple[str, str | int | float | 
 class CPanelClient:
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
+        self._transport = transport
         self._client = httpx.AsyncClient(
             base_url=settings.cpanel_base_url,
             verify=settings.cpanel_verify_tls,
@@ -169,13 +170,21 @@ class CPanelClient:
             Risk.PRIVILEGED,
         }:
             # cPanel accepts UAPI mutation parameters on POST query strings.
-            # Keep reads on GET while avoiding the connection failures seen
-            # with mutation requests sent as GET.
-            response = await self._client.post(
-                endpoint,
-                headers=headers,
-                params={key: value for key, value in _query_items(params)},
-            )
+            # Use a one-shot client and close the connection after the write:
+            # the upstream sometimes closes pooled connections around
+            # mass_edit_zone responses.
+            async with httpx.AsyncClient(
+                base_url=self.settings.cpanel_base_url,
+                verify=self.settings.cpanel_verify_tls,
+                timeout=self.settings.cpanel_timeout_seconds,
+                transport=self._transport,
+                limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+            ) as mutation_client:
+                response = await mutation_client.post(
+                    endpoint,
+                    headers={**headers, "Connection": "close"},
+                    params={key: value for key, value in _query_items(params)},
+                )
         else:
             response = await self._client.get(
                 endpoint, headers=headers, params=_query_items(params)
