@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 
 from .config import Settings
-from .models import ApiFamily, Capability
+from .models import ApiFamily, Capability, Risk
 
 
 class CPanelError(RuntimeError):
@@ -161,9 +161,25 @@ class CPanelClient:
         else:
             raise CPanelError("workflow cannot be sent directly to cPanel", code="INVALID_API")
 
-        response = await self._client.get(
-            f"/json-api/{function}", headers=headers, params=_query_items(params)
-        )
+        endpoint = f"/json-api/{function}"
+        if capability.api == ApiFamily.UAPI and capability.risk in {
+            Risk.EXTERNAL_SIDE_EFFECT,
+            Risk.REVERSIBLE_WRITE,
+            Risk.DESTRUCTIVE,
+            Risk.PRIVILEGED,
+        }:
+            # cPanel accepts UAPI parameters as form data on POST.  Keep
+            # reads on GET, but avoid putting mutation payloads (notably
+            # DNS mass_edit_zone JSON) in a URL query string.
+            response = await self._client.post(
+                endpoint,
+                headers=headers,
+                data={key: value for key, value in _query_items(params)},
+            )
+        else:
+            response = await self._client.get(
+                endpoint, headers=headers, params=_query_items(params)
+            )
         if response.status_code in {401, 403}:
             raise CPanelError(
                 "cPanel rejected the upstream credential",
