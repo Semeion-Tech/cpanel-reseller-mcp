@@ -188,7 +188,7 @@ jobs:
     runs-on:
       - self-hosted
       - Linux
-      - ARM64
+      - X64
       - cpanel-reseller-production
     timeout-minutes: 15
     environment:
@@ -201,15 +201,21 @@ jobs:
       contents: read
       packages: read
     env:
-      DEPLOY_PATH: /home/semeion-tech/cpanel-reseller-mcp
-      HEALTHCHECK_URL: https://mcp-reseller.semeiontech.com/healthz
+      DEPLOY_PATH: /opt/cpanel-reseller-mcp
+      # Loopback, e nao o dominio publico: este healthcheck existe para
+      # provar que a instancia que ACABOU de receber o deploy subiu. Pelo
+      # dominio, durante a janela de sobreposicao entre os dois servidores,
+      # ele mede o outro host e fica verde mesmo se este deploy falhar.
+      # A cadeia nginx/TLS nao muda com o deploy do container e pertence ao
+      # smoke test de infraestrutura, nao a este pipeline.
+      HEALTHCHECK_URL: http://127.0.0.1:8787/healthz
     steps:
       - name: Check out deployment files
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Validate production target
         run: |
-          test "$(id -un)" = semeion-tech
+          test "$(id -un)" = semeion-svc
           test -d "$DEPLOY_PATH"
           test -f "$DEPLOY_PATH/.env"
           test "$(stat -c %a "$DEPLOY_PATH/.env")" = 600
