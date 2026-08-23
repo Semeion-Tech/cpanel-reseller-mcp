@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
-readonly PROJECT_DIR="/home/semeion-tech/cpanel-reseller-mcp"
+readonly PROJECT_DIR="/opt/cpanel-reseller-mcp"
 readonly REGISTRY_IMAGE="ghcr.io/semeion-tech/cpanel-reseller-mcp"
 readonly IMAGE="${1:?image is required}"
 readonly COMMIT_SHA="${2:?commit SHA is required}"
