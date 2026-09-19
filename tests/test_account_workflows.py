@@ -49,3 +49,48 @@ async def test_capability_check_reports_account_features(harness, viewer) -> Non
             if call[0] == "whm.verify_user_has_feature"
         ]
         assert feature_calls == []
+
+
+class DeniedFeatureCPanel:
+    """cPanel double whose feature lookup is refused, like the reseller token on the server."""
+
+    def __init__(self, inner, mode: str) -> None:
+        self.inner = inner
+        self.mode = mode
+
+    async def call(self, capability, account, arguments, *, retry_safe=False):
+        if capability.function == "verify_user_has_feature":
+            if self.mode == "denied":
+                from reseller_mcp.cpanel import CPanelError
+
+                raise CPanelError(
+                    "Permission denied: You do not have the required privileges",
+                    code="UPSTREAM_OPERATION_FAILED",
+                )
+            return {"has_feature": 0}
+        return await self.inner.call(capability, account, arguments, retry_safe=retry_safe)
+
+
+@pytest.mark.asyncio
+async def test_a_feature_lookup_the_token_cannot_make_is_unknown_not_missing(
+    harness, viewer
+) -> None:
+    harness.cpanel = DeniedFeatureCPanel(harness.cpanel, "denied")
+
+    check = await harness.accounts.capability_check(viewer, "uapi.SSL.list_ssl_items", "acctalpha")
+
+    assert check["features"] == {"sslmanager": None}
+    assert check["executable"] is True
+    assert "could not be verified" in check["reason"]
+    assert "sslmanager" in check["feature_errors"]
+
+
+@pytest.mark.asyncio
+async def test_a_confirmed_missing_feature_still_blocks_execution(harness, viewer) -> None:
+    harness.cpanel = DeniedFeatureCPanel(harness.cpanel, "missing")
+
+    check = await harness.accounts.capability_check(viewer, "uapi.SSL.list_ssl_items", "acctalpha")
+
+    assert check["features"] == {"sslmanager": False}
+    assert check["executable"] is False
+    assert check["reason"] == "account does not have every required feature"

@@ -901,6 +901,7 @@ def curated_capabilities() -> list[Capability]:
                 "instalado em cada um. Não devolve chaves privadas."
             ),
             "schema": _schema(),
+            "required_features": ["sslinstall"],
         },
         {
             "id": "uapi.SSL.list_certs",
@@ -910,12 +911,14 @@ def curated_capabilities() -> list[Capability]:
                 "domínios alternativos."
             ),
             "schema": _schema(),
+            "required_features": ["sslmanager"],
         },
         {
             "id": "uapi.SSL.get_autossl_problems",
             "title": "Problemas do AutoSSL",
             "description": ("Lista os domínios da conta com problemas no AutoSSL."),
             "schema": _schema(),
+            "required_features": ["sslinstall"],
         },
         {
             "id": "uapi.SSL.get_autossl_excluded_domains",
@@ -928,18 +931,21 @@ def curated_capabilities() -> list[Capability]:
             "title": "Fila pendente do AutoSSL",
             "description": ("Lista os domínios da conta que aguardam na fila do AutoSSL."),
             "schema": _schema(),
+            "required_features": ["sslinstall"],
         },
         {
             "id": "uapi.SSL.is_autossl_check_in_progress",
             "title": "Verificação do AutoSSL em andamento",
             "description": ("Informa se há uma verificação do AutoSSL em andamento para a conta."),
             "schema": _schema(),
+            "required_features": ["sslinstall"],
         },
         {
             "id": "uapi.SSL.is_sni_supported",
             "title": "Servidor suporta SNI",
             "description": ("Informa se o servidor da conta suporta SNI para certificados."),
             "schema": _schema(),
+            "required_features": ["sslinstall"],
         },
         {
             "id": "uapi.WebVhosts.list_ssl_capable_domains",

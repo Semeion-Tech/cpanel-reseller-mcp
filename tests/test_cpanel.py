@@ -79,3 +79,20 @@ async def test_uapi_mutations_use_isolated_post_query(settings) -> None:
     assert b"cpanel.function=mass_edit_zone" in str(seen.get("url")).encode()
     assert b"add=%7B%22record_type%22%3A%22TXT%22%7D" in str(seen.get("url")).encode()
     await client.close()
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "You do not have the feature “sslinstall”.",
+        "Você não tem o recurso “sslinstall”.",
+        "Voce nao tem o recurso “sslinstall”.",
+    ],
+)
+def test_missing_account_feature_is_recognized_in_english_and_portuguese(message: str) -> None:
+    from reseller_mcp.cpanel import _operation_error
+
+    error = _operation_error(message)
+
+    assert error.code == "ACCOUNT_FEATURE_UNAVAILABLE"
+    assert error.category == "account_configuration"

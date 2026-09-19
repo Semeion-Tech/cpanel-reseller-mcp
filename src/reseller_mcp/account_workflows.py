@@ -284,9 +284,15 @@ class AccountWorkflows:
                         {"user": username, "feature": feature},
                         correlation_id=correlation_id,
                     )
-                    checks["features"][feature] = result.ok and self._feature_enabled(result.data)
+                    if result.ok:
+                        checks["features"][feature] = self._feature_enabled(result.data)
+                    else:
+                        # The reseller token may lack the ACL to verify features; that is
+                        # "unknown", not "missing".
+                        checks["features"][feature] = None
+                        checks.setdefault("feature_errors", {})[feature] = result.error
                 except Exception as exc:
-                    checks["features"][feature] = False
+                    checks["features"][feature] = None
                     checks.setdefault("feature_errors", {})[feature] = self._failure_error(exc)
         else:
             checks["features"] = {feature: None for feature in capability.required_features}
@@ -295,7 +301,7 @@ class AccountWorkflows:
             and checks["role_authorized"]
             and checks["schema_validated"]
             and not checks.get("account_required")
-            and all(checks["features"].values())
+            and all(value is not False for value in checks["features"].values())
         )
         if not checks["server_available"]:
             checks["reason"] = capability.availability_reason
@@ -305,8 +311,13 @@ class AccountWorkflows:
             checks["reason"] = "capability has no validated schema"
         elif checks.get("account_required"):
             checks["reason"] = "account identifier is required"
-        elif checks["features"] and not all(checks["features"].values()):
+        elif any(value is False for value in checks["features"].values()):
             checks["reason"] = "account does not have every required feature"
+        elif any(value is None for value in checks["features"].values()):
+            checks["reason"] = (
+                "the required features could not be verified with this token; the operation "
+                "reports ACCOUNT_FEATURE_UNAVAILABLE if the account lacks one"
+            )
         return checks
 
     @staticmethod
