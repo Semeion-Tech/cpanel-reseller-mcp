@@ -109,3 +109,20 @@ def test_no_live_operation_starting_with_a_mutating_verb_is_classified_as_read()
         and mutating.search(item.function)
     ]
     assert reads == []
+
+
+def test_redirect_and_domain_read_capabilities_are_typed_reads(tmp_path) -> None:
+    capabilities = {item.id: item for item in Catalog(tmp_path / "missing.json").load()}
+
+    redirects = capabilities["uapi.Mime.list_redirects"]
+    assert redirects.curated is True
+    assert redirects.risk == Risk.READ
+    assert redirects.required_role == Role.VIEWER
+    assert set(redirects.input_schema["properties"]) == {"destination", "regex"}
+    assert redirects.input_schema["additionalProperties"] is False
+
+    domains = capabilities["uapi.DomainInfo.domains_data"]
+    assert domains.curated is True
+    assert domains.risk == Risk.READ
+    assert domains.input_schema["properties"]["format"]["enum"] == ["hash", "list"]
+    assert domains.input_schema["additionalProperties"] is False

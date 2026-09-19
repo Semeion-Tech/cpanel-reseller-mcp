@@ -129,6 +129,8 @@ ALIASES = {
     "uapi.Fileman.save_file_content": "arquivo salvar escrever conteúdo",
     "uapi.Fileman.list_files": "arquivos diretórios inventário listar",
     "uapi.Email.list_mxs": "email mx roteamento servidor",
+    "uapi.Mime.list_redirects": "redirecionamento redirect htaccess 301 302 domínio url listar",
+    "uapi.DomainInfo.domains_data": "domínios document root docroot subdomínios addon hospedagem",
     "uapi.Email.list_forwarders": "email encaminhadores redirecionamentos",
     "uapi.Email.list_auto_responders": "email autoresponders respostas automáticas",
     "uapi.EmailAuth.validate_current_spfs": "spf validar autenticação email dns",
@@ -318,6 +320,32 @@ def curated_capabilities() -> list[Capability]:
                     "priority": 0,
                 }
             ],
+        },
+        {
+            "id": "uapi.Mime.list_redirects",
+            "title": "Listar redirecionamentos",
+            "description": (
+                "Lista os redirecionamentos configurados nos .htaccess da conta. Pode filtrar "
+                "pelo destino exato ou por uma regex aplicada à URL de origem."
+            ),
+            "schema": _schema({"destination": string, "regex": string}),
+            "examples": [{}, {"destination": "https://example.com/"}],
+        },
+        {
+            "id": "uapi.DomainInfo.domains_data",
+            "title": "Configuração de hospedagem dos domínios",
+            "description": (
+                "Retorna, por domínio da conta (principal, adicionais, aliases e subdomínios), "
+                "a configuração de hospedagem, incluindo o document root."
+            ),
+            "schema": _schema(
+                {
+                    "format": {"type": "string", "enum": ["hash", "list"]},
+                    "hide_temporary_domains": boolean_integer,
+                    "return_https_redirects_status": boolean_integer,
+                }
+            ),
+            "examples": [{"format": "hash", "return_https_redirects_status": 1}],
         },
         {
             "id": "uapi.Email.list_forwarders",
