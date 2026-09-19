@@ -90,10 +90,30 @@ class PolicyEngine:
                     "SENSITIVE_TARGET_BLOCKED",
                 )
 
+        if capability.id == "uapi.SubDomain.addsubdomain" and "dir" in arguments:
+            self._check_subdomain_dir(str(arguments["dir"]))
+
         # A scoped administrator cannot create a new account outside a global reseller scope.
         if capability.function == "createacct" and "*" not in principal.account_scopes:
             raise PolicyError(
                 "creating accounts requires global reseller scope", "GLOBAL_SCOPE_REQUIRED"
+            )
+
+    @staticmethod
+    def _check_subdomain_dir(value: str) -> None:
+        """Keep a subdomain's document root inside public_html of the account."""
+        segments = [part for part in value.strip().split("/") if part]
+        invalid = (
+            not segments
+            or "\\" in value
+            or "\x00" in value
+            or any(part in {".", ".."} for part in segments)
+            or segments[0] != "public_html"
+        )
+        if invalid:
+            raise PolicyError(
+                "the subdomain document root must be a path inside public_html",
+                "PATH_OUTSIDE_ALLOWED_ROOT",
             )
 
     @staticmethod
