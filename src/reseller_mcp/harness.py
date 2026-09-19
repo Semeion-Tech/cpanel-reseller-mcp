@@ -747,6 +747,13 @@ class Harness:
         if capability.id == "uapi.SubDomain.addsubdomain":
             listing = self._get_capability("uapi.DomainInfo.domains_data")
             return listing, None, {"format": "hash"}
+        if capability.id == "api2.Fileman.mkdir":
+            listing = self._get_capability("api2.Fileman.listfiles")
+            return listing, None, {"dir": str(arguments["path"]).strip().strip("/")}
+        if capability.id == "api2.Fileman.fileop":
+            parent, _, _ = str(arguments["sourcefiles"]).strip().strip("/").rpartition("/")
+            listing = self._get_capability("api2.Fileman.listfiles")
+            return listing, None, {"dir": parent}
         if capability.id == "uapi.Fileman.save_file_content":
             read = self._get_capability("uapi.Fileman.get_file_content")
             return read, None, {"dir": arguments.get("dir"), "file": arguments.get("file")}
@@ -814,6 +821,19 @@ class Harness:
             return str(arguments.get("email", "")).lower() in serialized
         if capability.module == "Email" and capability.function == "delete_pop":
             return str(arguments.get("email", "")).lower() not in serialized
+        if capability.id == "api2.Fileman.mkdir":
+            return any(
+                isinstance(item, dict)
+                and item.get("file") == arguments["name"]
+                and item.get("type") == "dir"
+                for item in (after if isinstance(after, list) else [])
+            )
+        if capability.id == "api2.Fileman.fileop":
+            base = str(arguments["sourcefiles"]).strip().strip("/").rsplit("/", 1)[-1]
+            return not any(
+                isinstance(item, dict) and item.get("file") == base
+                for item in (after if isinstance(after, list) else [])
+            )
         if capability.id == "uapi.SubDomain.addsubdomain":
             full_name = f"{arguments.get('domain', '')}.{arguments.get('rootdomain', '')}"
             return full_name.lower() in serialized
