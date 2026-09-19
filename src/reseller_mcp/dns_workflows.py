@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import base64
 import binascii
+import ipaddress
 import json
+import re
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any
 
 from .cpanel import CPanelError
@@ -12,11 +15,197 @@ if TYPE_CHECKING:
     from .harness import Harness
 
 
+_HOSTNAME = re.compile(
+    r"^(?=.{1,253}\.?$)[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?"
+    r"(\.[a-z0-9_]([a-z0-9_-]{0,61}[a-z0-9_])?)*\.?$",
+    re.IGNORECASE,
+)
+_CAA_TAGS = ("issue", "issuewild", "iodef")
+
+
 class DNSWorkflows:
     """Typed, account-scoped DNS mutations backed by cPanel UAPI."""
 
+    # Record types handled by the generic ensure workflow (CNAME and TXT keep their own).
+    ENSURE_TYPES = ("A", "AAAA", "CAA", "SRV", "MX")
+    # Number of whitespace-separated fields in the human-readable value of a record.
+    _VALUE_FIELDS = {"MX": 2, "SRV": 4, "CAA": 3}
+
     def __init__(self, harness: Harness):
         self.harness = harness
+
+    def prepare_hook(
+        self, record_type: str
+    ) -> Callable[[str | None, dict[str, Any]], Awaitable[dict[str, Any]]]:
+        async def prepare(account: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
+            return await self.prepare_typed(record_type, account, arguments)
+
+        return prepare
+
+    def execute_hook(self, record_type: str) -> Callable[[Preparation], Awaitable[dict[str, Any]]]:
+        async def execute(preparation: Preparation) -> dict[str, Any]:
+            return await self._execute_record(preparation, record_type)
+
+        return execute
+
+    async def prepare_typed(
+        self, record_type: str, account: str | None, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Plan an idempotent add/edit of an A, AAAA, CAA, SRV or MX record."""
+        if not account:
+            raise CPanelError("DNS workflows require an account", code="ACCOUNT_REQUIRED")
+        replace = bool(arguments.get("replace_existing", False))
+        multiple = bool(arguments.get("allow_multiple", False))
+        if replace and multiple:
+            raise self._invalid("replace_existing and allow_multiple are mutually exclusive")
+        zone = str(arguments["zone"])
+        name = self._canonical_name(str(arguments["name"]))
+        if not name:
+            raise self._invalid("the record name must not be empty")
+        data = self._typed_data(record_type, arguments)
+        wanted = self._normalize_data(record_type, data)
+        current = await self._read_zone(account, zone)
+        records = self._records(current)
+        at_name = [record for record in records if self._canonical_name(record["name"]) == name]
+        if any(record["record_type"].upper() == "CNAME" for record in at_name):
+            raise CPanelError(
+                "a CNAME exists at this name and cannot coexist with other records",
+                code="DNS_RECORD_CONFLICT",
+                category="validation",
+            )
+        related = [record for record in at_name if record["record_type"].upper() == record_type]
+        if record_type == "CAA":
+            # Different CAA tags are independent policies and may coexist.
+            related = [
+                record
+                for record in related
+                if self._normalize_data("CAA", record["data"])[1] == wanted[1]
+            ]
+        new_record = self._record(name, int(arguments["ttl"]), record_type, data)
+        plan: dict[str, Any]
+        if any(self._normalize_data(record_type, record["data"]) == wanted for record in related):
+            plan = {"operation": "noop", "reason": f"{record_type} already has the requested value"}
+        elif not related or multiple:
+            plan = {"operation": "add", "record": new_record}
+        elif replace:
+            if len(related) != 1 or related[0].get("line_index") is None:
+                raise CPanelError(
+                    f"the existing {record_type} record is not uniquely editable; "
+                    "remove the extra records with workflow.dns_record_remove first",
+                    code="DNS_RECORD_NOT_EDITABLE",
+                    category="validation",
+                )
+            plan = {
+                "operation": "edit",
+                "line_index": related[0]["line_index"],
+                "record": new_record,
+            }
+        else:
+            raise CPanelError(
+                f"a {record_type} record already exists at this name; set replace_existing "
+                "to change it or allow_multiple to add another value",
+                code="DNS_RECORD_CONFLICT",
+                category="validation",
+            )
+        return {"zone": zone, "serial": self._serial(current), "records": records, "plan": plan}
+
+    @staticmethod
+    def _invalid(message: str) -> CPanelError:
+        return CPanelError(message, code="DNS_INVALID_VALUE", category="validation")
+
+    @staticmethod
+    def _typed_data(record_type: str, arguments: dict[str, Any]) -> list[str]:
+        invalid = DNSWorkflows._invalid
+        if record_type in {"A", "AAAA"}:
+            try:
+                address = ipaddress.ip_address(str(arguments["address"]).strip())
+            except ValueError as exc:
+                raise invalid(f"{arguments['address']!r} is not a valid IP address") from exc
+            expected_version = 4 if record_type == "A" else 6
+            if address.version != expected_version:
+                raise invalid(f"a {record_type} record requires an IPv{expected_version} address")
+            return [str(address)]
+        if record_type == "MX":
+            return [
+                str(DNSWorkflows._bounded(arguments["priority"], "priority", 0, 65535)),
+                DNSWorkflows._fqdn(str(arguments["exchange"])),
+            ]
+        if record_type == "SRV":
+            return [
+                str(DNSWorkflows._bounded(arguments["priority"], "priority", 0, 65535)),
+                str(DNSWorkflows._bounded(arguments["weight"], "weight", 0, 65535)),
+                str(DNSWorkflows._bounded(arguments["port"], "port", 1, 65535)),
+                DNSWorkflows._fqdn(str(arguments["target"])),
+            ]
+        if record_type == "CAA":
+            tag = str(arguments["tag"]).strip().lower()
+            if tag not in _CAA_TAGS:
+                raise invalid(f"the CAA tag must be one of {', '.join(_CAA_TAGS)}")
+            flags = DNSWorkflows._bounded(arguments.get("flags", 0), "flags", 0, 255)
+            if flags not in {0, 128}:
+                raise invalid("the CAA flags must be 0 or 128")
+            value = str(arguments["value"]).strip().strip('"')
+            if not value:
+                raise invalid("the CAA value must not be empty")
+            return [str(flags), tag, value]
+        raise invalid(f"unsupported record type {record_type}")
+
+    @staticmethod
+    def _bounded(value: Any, field: str, low: int, high: int) -> int:
+        try:
+            number = int(value)
+        except (TypeError, ValueError) as exc:
+            raise DNSWorkflows._invalid(f"{field} must be an integer") from exc
+        if not low <= number <= high:
+            raise DNSWorkflows._invalid(f"{field} must be between {low} and {high}")
+        return number
+
+    @staticmethod
+    def _fqdn(value: str) -> str:
+        host = value.strip()
+        try:
+            ipaddress.ip_address(host)
+        except ValueError:
+            pass
+        else:
+            raise DNSWorkflows._invalid("a hostname is required, not an IP address")
+        if not _HOSTNAME.match(host):
+            raise DNSWorkflows._invalid(f"{value!r} is not a valid hostname")
+        return host.rstrip(".").casefold() + "."
+
+    @classmethod
+    def _normalize_data(cls, record_type: str, data: list[str]) -> tuple[str, ...]:
+        """Comparable form of a record's data, tolerant of cPanel formatting."""
+        rtype = record_type.upper()
+        try:
+            if rtype in {"A", "AAAA"}:
+                return (str(ipaddress.ip_address(data[0].strip())),)
+            if rtype == "CNAME":
+                return (cls._canonical_name(data[0]),)
+            if rtype == "MX":
+                return (str(int(data[0])), cls._canonical_name(data[1]))
+            if rtype == "SRV":
+                return (
+                    str(int(data[0])),
+                    str(int(data[1])),
+                    str(int(data[2])),
+                    cls._canonical_name(data[3]),
+                )
+            if rtype == "CAA":
+                return (str(int(data[0])), data[1].strip().lower(), data[2].strip().strip('"'))
+        except (ValueError, IndexError, AttributeError):
+            pass
+        return tuple(str(item) for item in data)
+
+    def _parse_value(self, record_type: str, value: str) -> list[str]:
+        """Split a human-readable record value ("10 mail.example.com") into data fields."""
+        fields = self._VALUE_FIELDS.get(record_type)
+        if fields is None:
+            return [value]
+        parts = value.split(None, fields - 1)
+        if len(parts) != fields:
+            raise self._invalid(f"a {record_type} value needs {fields} space-separated fields")
+        return parts
 
     async def prepare_cname(self, account: str | None, arguments: dict[str, Any]) -> dict[str, Any]:
         if not account:
@@ -132,14 +321,16 @@ class DNSWorkflows:
         zone = str(arguments["zone"])
         name = self._canonical_name(str(arguments["name"]))
         record_type = str(arguments["record_type"]).upper()
-        value = str(arguments["value"])
+        wanted = self._normalize_data(
+            record_type, self._parse_value(record_type, str(arguments["value"]))
+        )
         current = await self._read_zone(account, zone)
         matches = [
             record
             for record in self._records(current)
             if self._canonical_name(record["name"]) == name
             and record["record_type"].upper() == record_type
-            and record["data"] == [value]
+            and self._normalize_data(record_type, record["data"]) == wanted
         ]
         if len(matches) != 1 or matches[0].get("line_index") is None:
             raise CPanelError(
@@ -286,7 +477,9 @@ class DNSWorkflows:
     ) -> dict[str, Any]:
         if record_type == "CNAME":
             return await self.prepare_cname(preparation.account, preparation.arguments)
-        return await self.prepare_txt(preparation.account, preparation.arguments)
+        if record_type == "TXT":
+            return await self.prepare_txt(preparation.account, preparation.arguments)
+        return await self.prepare_typed(record_type, preparation.account, preparation.arguments)
 
     async def _refresh_remove_plan(self, preparation: Preparation) -> dict[str, Any]:
         return await self.prepare_remove(preparation.account, preparation.arguments)
@@ -313,12 +506,8 @@ class DNSWorkflows:
         return any(
             self._canonical_name(record["name"]) == self._canonical_name(removed["name"])
             and record["record_type"].upper() == removed["record_type"].upper()
-            and (
-                [self._canonical_name(record["data"][0])]
-                == [self._canonical_name(removed["data"][0])]
-                if record["record_type"].upper() == "CNAME"
-                else record["data"] == removed["data"]
-            )
+            and self._normalize_data(record["record_type"], record["data"])
+            == self._normalize_data(removed["record_type"], removed["data"])
             for record in self._records(zone)
         )
 
@@ -326,12 +515,8 @@ class DNSWorkflows:
         return any(
             self._canonical_name(record["name"]) == self._canonical_name(requested["dname"])
             and record["record_type"].upper() == record_type
-            and (
-                [self._canonical_name(record["data"][0])]
-                == [self._canonical_name(requested["data"][0])]
-                if record_type == "CNAME"
-                else record["data"] == requested["data"]
-            )
+            and self._normalize_data(record_type, record["data"])
+            == self._normalize_data(record_type, requested["data"])
             and record["ttl"] == requested["ttl"]
             for record in self._records(zone)
         )
