@@ -263,3 +263,94 @@ def test_absolute_and_wire_names() -> None:
     assert DNSWorkflows._wire_name(ZONE, "@") == "example.com."
     assert DNSWorkflows._wire_name(ZONE, "www.example.com.") == "www"
     assert DNSWorkflows._wire_name(ZONE, "selector1._domainkey") == "selector1._domainkey"
+
+
+TXT_SPF = (f"{ZONE}.", "TXT", ["v=spf1 a mx ~all"])
+TXT_ARGS = {"zone": ZONE, "name": "@", "value": "google-site-verification=abc", "ttl": 300}
+
+
+async def _txt(
+    cpanel: RealShapeCPanel, arguments: dict[str, Any]
+) -> tuple[dict[str, Any], dict[str, Any]]:
+    workflows = DNSWorkflows(WorkflowHarness(cpanel))
+    before = await workflows.prepare_txt("acct", arguments)
+    preparation = Preparation.model_construct(
+        account="acct", arguments=arguments, before_state=before
+    )
+    return before, await workflows.execute_txt(preparation)
+
+
+@pytest.mark.asyncio
+async def test_txt_never_overwrites_the_existing_spf_without_an_explicit_choice() -> None:
+    cpanel = RealShapeCPanel([TXT_SPF])
+    workflows = DNSWorkflows(WorkflowHarness(cpanel))
+    with pytest.raises(CPanelError) as error:
+        await workflows.prepare_txt("acct", TXT_ARGS)
+    assert error.value.code == "DNS_RECORD_CONFLICT"
+    assert cpanel.writes == []
+
+
+@pytest.mark.asyncio
+async def test_txt_allow_multiple_adds_a_token_next_to_the_spf() -> None:
+    cpanel = RealShapeCPanel([TXT_SPF])
+    before, result = await _txt(cpanel, {**TXT_ARGS, "allow_multiple": True})
+
+    assert before["plan"]["operation"] == "add"
+    assert result["verified"] is True
+    assert cpanel.names() == [
+        TXT_SPF,
+        (f"{ZONE}.", "TXT", ["google-site-verification=abc"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_txt_replace_existing_edits_the_single_existing_record() -> None:
+    cpanel = RealShapeCPanel([TXT_SPF])
+    before, result = await _txt(cpanel, {**TXT_ARGS, "replace_existing": True})
+
+    assert before["plan"]["operation"] == "edit"
+    assert result["verified"] is True
+    assert cpanel.names() == [(f"{ZONE}.", "TXT", ["google-site-verification=abc"])]
+
+
+@pytest.mark.asyncio
+async def test_txt_match_prefix_is_an_explicit_selection() -> None:
+    cpanel = RealShapeCPanel([TXT_SPF, (f"{ZONE}.", "TXT", ["other-token"])])
+    arguments = {**TXT_ARGS, "value": "v=spf1 -all", "match_prefix": "v=spf1"}
+    before, result = await _txt(cpanel, arguments)
+
+    assert before["plan"]["operation"] == "edit"
+    assert result["verified"] is True
+    assert cpanel.names() == [
+        (f"{ZONE}.", "TXT", ["v=spf1 -all"]),
+        (f"{ZONE}.", "TXT", ["other-token"]),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_txt_is_added_when_nothing_exists_at_the_name() -> None:
+    cpanel = RealShapeCPanel([TXT_SPF])
+    before, result = await _txt(cpanel, {**TXT_ARGS, "name": "_dmarc"})
+
+    assert before["plan"]["operation"] == "add"
+    assert result["verified"] is True
+    assert len(cpanel.names()) == 2
+
+
+@pytest.mark.asyncio
+async def test_txt_with_several_records_and_no_choice_is_ambiguous() -> None:
+    cpanel = RealShapeCPanel([TXT_SPF, (f"{ZONE}.", "TXT", ["other-token"])])
+    workflows = DNSWorkflows(WorkflowHarness(cpanel))
+    with pytest.raises(CPanelError) as error:
+        await workflows.prepare_txt("acct", TXT_ARGS)
+    assert error.value.code == "DNS_TXT_RECORD_AMBIGUOUS"
+
+
+@pytest.mark.asyncio
+async def test_txt_replace_and_allow_multiple_are_mutually_exclusive() -> None:
+    workflows = DNSWorkflows(WorkflowHarness(RealShapeCPanel([])))
+    with pytest.raises(CPanelError) as error:
+        await workflows.prepare_txt(
+            "acct", {**TXT_ARGS, "replace_existing": True, "allow_multiple": True}
+        )
+    assert error.value.code == "DNS_INVALID_VALUE"

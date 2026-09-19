@@ -505,8 +505,10 @@ def curated_capabilities() -> list[Capability]:
             "id": "workflow.dns_txt_ensure",
             "title": "Garantir registro TXT",
             "description": (
-                "Adiciona ou atualiza um TXT em uma zona DNS da conta. Permite selecionar "
-                "com segurança um registro existente por prefixo, como v=spf1."
+                "Adiciona ou atualiza um TXT em uma zona DNS da conta. Um TXT existente no "
+                "mesmo nome nunca é sobrescrito sem escolha explícita: selecione-o por "
+                "match_prefix (como v=spf1), use replace_existing para trocar o único "
+                "existente ou allow_multiple para adicionar mais um valor."
             ),
             "schema": _schema(
                 {
@@ -515,6 +517,7 @@ def curated_capabilities() -> list[Capability]:
                     "value": string,
                     "ttl": {"type": "integer", "minimum": 0},
                     "replace_existing": {"type": "boolean", "default": False},
+                    "allow_multiple": {"type": "boolean", "default": False},
                     "match_prefix": string,
                 },
                 ["zone", "name", "value", "ttl"],
