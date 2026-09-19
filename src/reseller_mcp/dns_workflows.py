@@ -59,14 +59,13 @@ class DNSWorkflows:
         if replace and multiple:
             raise self._invalid("replace_existing and allow_multiple are mutually exclusive")
         zone = str(arguments["zone"])
-        name = self._canonical_name(str(arguments["name"]))
-        if not name:
-            raise self._invalid("the record name must not be empty")
+        name = self._absolute(zone, str(arguments["name"]))
+        wire_name = self._wire_name(zone, str(arguments["name"]))
         data = self._typed_data(record_type, arguments)
         wanted = self._normalize_data(record_type, data)
         current = await self._read_zone(account, zone)
         records = self._records(current)
-        at_name = [record for record in records if self._canonical_name(record["name"]) == name]
+        at_name = [record for record in records if self._absolute(zone, record["name"]) == name]
         if any(record["record_type"].upper() == "CNAME" for record in at_name):
             raise CPanelError(
                 "a CNAME exists at this name and cannot coexist with other records",
@@ -81,7 +80,7 @@ class DNSWorkflows:
                 for record in related
                 if self._normalize_data("CAA", record["data"])[1] == wanted[1]
             ]
-        new_record = self._record(name, int(arguments["ttl"]), record_type, data)
+        new_record = self._record(wire_name, int(arguments["ttl"]), record_type, data)
         plan: dict[str, Any]
         if any(self._normalize_data(record_type, record["data"]) == wanted for record in related):
             plan = {"operation": "noop", "reason": f"{record_type} already has the requested value"}
@@ -211,11 +210,12 @@ class DNSWorkflows:
         if not account:
             raise CPanelError("DNS workflows require an account", code="ACCOUNT_REQUIRED")
         zone = str(arguments["zone"])
-        name = self._canonical_name(str(arguments["name"]))
+        name = self._absolute(zone, str(arguments["name"]))
+        wire_name = self._wire_name(zone, str(arguments["name"]))
         target = self._canonical_name(str(arguments["target"]))
         current = await self._read_zone(account, zone)
         records = self._records(current)
-        matching = [record for record in records if self._canonical_name(record["name"]) == name]
+        matching = [record for record in records if self._absolute(zone, record["name"]) == name]
         same_target = [
             record
             for record in matching
@@ -241,12 +241,12 @@ class DNSWorkflows:
             plan = {
                 "operation": "edit",
                 "line_index": matching[0]["line_index"],
-                "record": self._record(name, int(arguments["ttl"]), "CNAME", [target]),
+                "record": self._record(wire_name, int(arguments["ttl"]), "CNAME", [target]),
             }
         else:
             plan = {
                 "operation": "add",
-                "record": self._record(name, int(arguments["ttl"]), "CNAME", [target]),
+                "record": self._record(wire_name, int(arguments["ttl"]), "CNAME", [target]),
             }
         return {"zone": zone, "serial": self._serial(current), "records": records, "plan": plan}
 
@@ -257,14 +257,15 @@ class DNSWorkflows:
         if not account:
             raise CPanelError("DNS workflows require an account", code="ACCOUNT_REQUIRED")
         zone = str(arguments["zone"])
-        name = self._canonical_name(str(arguments["name"]))
+        name = self._absolute(zone, str(arguments["name"]))
+        wire_name = self._wire_name(zone, str(arguments["name"]))
         value = str(arguments["value"])
         current = await self._read_zone(account, zone)
         records = self._records(current)
         matching = [
             record
             for record in records
-            if self._canonical_name(record["name"]) == name
+            if self._absolute(zone, record["name"]) == name
             and record["record_type"].upper() == "TXT"
         ]
         same_value = [record for record in matching if record["data"] == [value]]
@@ -295,7 +296,7 @@ class DNSWorkflows:
                 plan = {
                     "operation": "edit",
                     "line_index": line_index,
-                    "record": self._record(name, int(arguments["ttl"]), "TXT", [value]),
+                    "record": self._record(wire_name, int(arguments["ttl"]), "TXT", [value]),
                 }
             elif matching and not arguments.get("replace_existing", False):
                 raise CPanelError(
@@ -306,7 +307,7 @@ class DNSWorkflows:
             else:
                 plan = {
                     "operation": "add",
-                    "record": self._record(name, int(arguments["ttl"]), "TXT", [value]),
+                    "record": self._record(wire_name, int(arguments["ttl"]), "TXT", [value]),
                 }
         return {"zone": zone, "serial": self._serial(current), "records": records, "plan": plan}
 
@@ -319,7 +320,7 @@ class DNSWorkflows:
         if not account:
             raise CPanelError("DNS workflows require an account", code="ACCOUNT_REQUIRED")
         zone = str(arguments["zone"])
-        name = self._canonical_name(str(arguments["name"]))
+        name = self._absolute(zone, str(arguments["name"]))
         record_type = str(arguments["record_type"]).upper()
         wanted = self._normalize_data(
             record_type, self._parse_value(record_type, str(arguments["value"]))
@@ -328,7 +329,7 @@ class DNSWorkflows:
         matches = [
             record
             for record in self._records(current)
-            if self._canonical_name(record["name"]) == name
+            if self._absolute(zone, record["name"]) == name
             and record["record_type"].upper() == record_type
             and self._normalize_data(record_type, record["data"]) == wanted
         ]
@@ -365,7 +366,7 @@ class DNSWorkflows:
                 if exc.code != "UPSTREAM_NETWORK_ERROR":
                     raise
                 after = await self._read_after_ambiguous_write(account, str(current["zone"]))
-                if not self._has_record(after, removed):
+                if not self._has_record(str(current["zone"]), after, removed):
                     return {
                         "data": {"changed": True, "reconciled_after_transport_error": True},
                         "after_state": after,
@@ -385,7 +386,7 @@ class DNSWorkflows:
                 if exc.code != "UPSTREAM_NETWORK_ERROR":
                     raise
                 raise self._unknown_write_error(attempt + 1) from exc
-            verified = not self._has_record(after, removed)
+            verified = not self._has_record(str(current["zone"]), after, removed)
             return {
                 "data": result,
                 "after_state": after,
@@ -428,7 +429,9 @@ class DNSWorkflows:
                 if exc.code != "UPSTREAM_NETWORK_ERROR":
                     raise
                 reconciled = await self._read_after_ambiguous_write(account, str(current["zone"]))
-                if self._has_requested_record(reconciled, requested, record_type):
+                if self._has_requested_record(
+                    str(current["zone"]), reconciled, requested, record_type
+                ):
                     return {
                         "data": {"changed": True, "reconciled_after_transport_error": True},
                         "after_state": reconciled,
@@ -448,7 +451,9 @@ class DNSWorkflows:
                 if exc.code != "UPSTREAM_NETWORK_ERROR":
                     raise
                 raise self._unknown_write_error(attempt + 1) from exc
-            verified = self._has_requested_record(after, requested, record_type)
+            verified = self._has_requested_record(
+                str(current["zone"]), after, requested, record_type
+            )
             return {
                 "data": result,
                 "after_state": after,
@@ -502,18 +507,21 @@ class DNSWorkflows:
             hint="Read the authoritative DNS zone before retrying the write.",
         )
 
-    def _has_record(self, zone: Any, removed: dict[str, Any]) -> bool:
+    def _has_record(self, zone_name: str, zone: Any, removed: dict[str, Any]) -> bool:
         return any(
-            self._canonical_name(record["name"]) == self._canonical_name(removed["name"])
+            self._absolute(zone_name, record["name"]) == self._absolute(zone_name, removed["name"])
             and record["record_type"].upper() == removed["record_type"].upper()
             and self._normalize_data(record["record_type"], record["data"])
             == self._normalize_data(removed["record_type"], removed["data"])
             for record in self._records(zone)
         )
 
-    def _has_requested_record(self, zone: Any, requested: dict[str, Any], record_type: str) -> bool:
+    def _has_requested_record(
+        self, zone_name: str, zone: Any, requested: dict[str, Any], record_type: str
+    ) -> bool:
         return any(
-            self._canonical_name(record["name"]) == self._canonical_name(requested["dname"])
+            self._absolute(zone_name, record["name"])
+            == self._absolute(zone_name, requested["dname"])
             and record["record_type"].upper() == record_type
             and self._normalize_data(record_type, record["data"])
             == self._normalize_data(record_type, requested["data"])
@@ -549,6 +557,36 @@ class DNSWorkflows:
     @staticmethod
     def _canonical_name(value: str) -> str:
         return value.rstrip(".").casefold()
+
+    @classmethod
+    def _absolute(cls, zone: str, name: str) -> str:
+        """Absolute, comparable form of a record name.
+
+        cPanel reports the apex as the absolute zone name ("example.com.") and other names
+        relative to the zone ("www"), while callers usually say "@". A name that already ends
+        with the zone name is taken as qualified.
+        """
+        zone_name = cls._canonical_name(zone)
+        text = name.strip()
+        if text in {"", "@"}:
+            return zone_name
+        if text.endswith("."):
+            return cls._canonical_name(text)
+        canonical = cls._canonical_name(text)
+        if canonical == zone_name or canonical.endswith(f".{zone_name}"):
+            return canonical
+        return f"{canonical}.{zone_name}"
+
+    @classmethod
+    def _wire_name(cls, zone: str, name: str) -> str:
+        """Name to send to cPanel: the absolute zone name for the apex, else relative."""
+        zone_name = cls._canonical_name(zone)
+        absolute = cls._absolute(zone, name)
+        if absolute == zone_name:
+            return f"{zone_name}."
+        if not absolute.endswith(f".{zone_name}"):
+            raise cls._invalid(f"the record name {name!r} is outside the zone {zone}")
+        return absolute[: -len(zone_name) - 1]
 
     @staticmethod
     def _serial(value: Any) -> int:
