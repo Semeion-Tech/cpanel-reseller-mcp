@@ -444,3 +444,31 @@ async def test_workflow_execute_hook_unexpected_error_marks_failed(harness, admi
     }
     prep = harness.db.get_preparation(prepared["preparation_id"])
     assert prep.state == PreparationState.FAILED
+
+
+class Api2FilesCPanel:
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, str | None, dict[str, object]]] = []
+
+    async def call(self, capability, account, arguments, *, retry_safe=False):
+        self.calls.append((capability.id, account, dict(arguments)))
+        return [{"file": "index.html", "type": "file"}]
+
+
+@pytest.mark.asyncio
+async def test_api2_listfiles_runs_as_a_read_and_rejects_unsafe_paths(harness, viewer) -> None:
+    harness.cpanel = Api2FilesCPanel()
+
+    result = await harness.query_execute(
+        viewer, "api2.Fileman.listfiles", "acctalpha", {"dir": "public_html"}
+    )
+    assert result.ok is True
+    assert harness.cpanel.calls == [("api2.Fileman.listfiles", "acctalpha", {"dir": "public_html"})]
+
+    for unsafe in ["../etc", "/etc/passwd", ".ssh"]:
+        with pytest.raises(HarnessError) as error:
+            await harness.query_execute(
+                viewer, "api2.Fileman.listfiles", "acctalpha", {"dir": unsafe}
+            )
+        assert error.value.code == "PATH_OUTSIDE_ALLOWED_ROOT"
+    assert len(harness.cpanel.calls) == 1

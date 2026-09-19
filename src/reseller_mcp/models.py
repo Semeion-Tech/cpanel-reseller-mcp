@@ -29,6 +29,9 @@ class Risk(StrEnum):
 class ApiFamily(StrEnum):
     WHM = "whm"
     UAPI = "uapi"
+    # Legacy cPanel API 2, reached through the WHM `cpanel` function. Only the functions in
+    # cpanel.API2_ALLOWED are ever sent.
+    API2 = "api2"
     WORKFLOW = "workflow"
 
 

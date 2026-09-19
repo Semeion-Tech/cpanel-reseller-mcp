@@ -150,6 +150,7 @@ ALIASES = {
     "uapi.Fileman.get_file_content": "arquivo ler conteúdo",
     "uapi.Fileman.save_file_content": "arquivo salvar escrever conteúdo",
     "uapi.Fileman.list_files": "arquivos diretórios inventário listar",
+    "api2.Fileman.listfiles": "arquivos diretórios pastas listar api2 home public_html",
     "uapi.Email.list_mxs": "email mx roteamento servidor",
     "workflow.redirect_ensure": "redirecionamento redirect domínio url apontar 301 302 criar",
     "workflow.redirect_remove": "redirecionamento redirect domínio remover excluir apagar",
@@ -819,6 +820,24 @@ def curated_capabilities() -> list[Capability]:
             "sensitive_output": True,
         },
         {
+            "id": "api2.Fileman.listfiles",
+            "title": "Listar diretório (API 2)",
+            "description": (
+                "Lista arquivos e diretórios de um caminho dentro da conta, relativo ao home "
+                "(por exemplo public_html). Usa a API 2 do cPanel, restrita a esta função; "
+                "não lê o conteúdo dos arquivos."
+            ),
+            "schema": _schema(
+                {
+                    "dir": string,
+                    "types": {"type": "string", "pattern": "^(file|dir)(\\|(file|dir))*$"},
+                    "showdotfiles": boolean_integer,
+                },
+                ["dir"],
+            ),
+            "examples": [{"dir": "public_html", "types": "file|dir", "showdotfiles": 0}],
+        },
+        {
             "id": "uapi.Fileman.list_files",
             "title": "Listar arquivos e diretórios",
             "description": "Retorna um inventário de metadados, sem ler o conteúdo dos arquivos.",
@@ -966,9 +985,9 @@ def curated_capabilities() -> list[Capability]:
     for definition in definitions:
         capability_id = definition["id"]
         api_name, *rest = capability_id.split(".")
-        if api_name == "uapi":
+        if api_name in {"uapi", "api2"}:
             module, function = rest
-            api = ApiFamily.UAPI
+            api = ApiFamily.UAPI if api_name == "uapi" else ApiFamily.API2
         elif api_name in {"workflow", "database"}:
             module, function = None, rest[0]
             api = ApiFamily.WORKFLOW
@@ -1017,7 +1036,7 @@ class Catalog:
             # Workflow capabilities are implemented by this service, not advertised by
             # the upstream WHM/UAPI catalog. Their availability is therefore independent
             # of the live cPanel operation inventory.
-            if capability.api == ApiFamily.WORKFLOW:
+            if capability.api in {ApiFamily.WORKFLOW, ApiFamily.API2}:
                 continue
             live_key = (
                 capability.function

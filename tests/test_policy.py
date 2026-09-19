@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import pytest
 
+from reseller_mcp.models import Principal, Role
 from reseller_mcp.policy import PolicyEngine, PolicyError
 
 
@@ -59,3 +60,39 @@ def test_database_writes_require_confirmation(db) -> None:
     assert policy.requires_confirmation(transaction_capability) is True
     migration_capability = db.get_capability("workflow.database_migration_apply")
     assert policy.requires_confirmation(migration_capability) is True
+
+
+def _listfiles(engine_module):
+    from reseller_mcp.catalog import curated_capabilities
+
+    return next(item for item in curated_capabilities() if item.id == "api2.Fileman.listfiles")
+
+
+@pytest.mark.parametrize("directory", ["public_html", "public_html/app", ".", "a/b/c"])
+def test_api2_listfiles_accepts_paths_inside_the_home(directory: str) -> None:
+    principal = Principal(
+        user_id="u", username="u", role=Role.ADMIN, client_id="c", account_scopes=frozenset({"*"})
+    )
+    PolicyEngine().authorize(principal, _listfiles(None), "acct", {"dir": directory})
+
+
+@pytest.mark.parametrize(
+    "directory",
+    ["../etc", "/etc", "/home/other", "public_html/../.ssh", ".ssh", "mail/x", "ssl/keys", "a\\b"],
+)
+def test_api2_listfiles_rejects_traversal_absolute_and_protected_paths(directory: str) -> None:
+    principal = Principal(
+        user_id="u", username="u", role=Role.ADMIN, client_id="c", account_scopes=frozenset({"*"})
+    )
+    with pytest.raises(PolicyError) as error:
+        PolicyEngine().authorize(principal, _listfiles(None), "acct", {"dir": directory})
+    assert error.value.code == "PATH_OUTSIDE_ALLOWED_ROOT"
+
+
+def test_api2_capabilities_require_an_account() -> None:
+    principal = Principal(
+        user_id="u", username="u", role=Role.ADMIN, client_id="c", account_scopes=frozenset({"*"})
+    )
+    with pytest.raises(PolicyError) as error:
+        PolicyEngine().authorize(principal, _listfiles(None), None, {"dir": "public_html"})
+    assert error.value.code == "ACCOUNT_REQUIRED"

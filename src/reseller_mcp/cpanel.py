@@ -87,6 +87,17 @@ def _query_items(values: dict[str, Any]) -> list[tuple[str, str | int | float | 
     return items
 
 
+# cPanel API 2 is only reachable through the generic WHM `cpanel` function, which can run
+# anything. The transport therefore refuses every module/function pair not listed here.
+API2_ALLOWED: frozenset[tuple[str, str]] = frozenset(
+    {
+        ("Fileman", "listfiles"),
+        ("Fileman", "mkdir"),
+        ("Fileman", "fileop"),
+    }
+)
+
+
 class CPanelClient:
     def __init__(self, settings: Settings, transport: httpx.AsyncBaseTransport | None = None):
         self.settings = settings
@@ -165,11 +176,29 @@ class CPanelClient:
                 "cpanel.function": capability.function,
                 **arguments,
             }
+        elif capability.api == ApiFamily.API2:
+            if not account:
+                raise CPanelError("API 2 operations require an account", code="ACCOUNT_REQUIRED")
+            if (capability.module, capability.function) not in API2_ALLOWED:
+                raise CPanelError(
+                    f"API 2 function {capability.module}::{capability.function} is not allowed",
+                    code="API2_FUNCTION_NOT_ALLOWED",
+                    category="policy",
+                )
+            function = "cpanel"
+            params = {
+                "api.version": 1,
+                "cpanel_jsonapi_user": account,
+                "cpanel_jsonapi_apiversion": 2,
+                "cpanel_jsonapi_module": capability.module,
+                "cpanel_jsonapi_func": capability.function,
+                **arguments,
+            }
         else:
             raise CPanelError("workflow cannot be sent directly to cPanel", code="INVALID_API")
 
         endpoint = f"/json-api/{function}"
-        if capability.api == ApiFamily.UAPI and capability.risk in {
+        if capability.api in {ApiFamily.UAPI, ApiFamily.API2} and capability.risk in {
             Risk.EXTERNAL_SIDE_EFFECT,
             Risk.REVERSIBLE_WRITE,
             Risk.DESTRUCTIVE,
@@ -219,6 +248,8 @@ class CPanelClient:
             error = _operation_error(metadata.get("reason") or "cPanel operation failed")
             error.details = {"command": metadata.get("command")}
             raise error
+        if capability.api == ApiFamily.API2:
+            return self._api2_result(payload)
         if capability.api == ApiFamily.UAPI:
             uapi = payload.get("data", {}).get("uapi", {})
             result = uapi.get("result", uapi)
@@ -227,3 +258,19 @@ class CPanelClient:
                 raise _operation_error("; ".join(str(item) for item in errors))
             return result
         return payload.get("data", payload)
+
+    @staticmethod
+    def _api2_result(payload: dict[str, Any]) -> Any:
+        """Unwrap an API 2 response, wherever the WHM `cpanel` function nests it."""
+        data = payload.get("data")
+        wrapped = payload.get("cpanelresult")
+        if wrapped is None and isinstance(data, dict):
+            wrapped = data.get("cpanelresult")
+        if not isinstance(wrapped, dict):
+            return data if data is not None else payload
+        event = wrapped.get("event")
+        failed = isinstance(event, dict) and str(event.get("result", "1")) != "1"
+        if failed or wrapped.get("error"):
+            reason = wrapped.get("error") or (event or {}).get("reason") or "API 2 call failed"
+            raise _operation_error(str(reason))
+        return wrapped.get("data", wrapped)
