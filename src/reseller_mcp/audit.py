@@ -11,9 +11,11 @@ from .db import Database
 from .models import Principal
 
 SENSITIVE_KEY = re.compile(
-    r"pass(word)?|secret|token|access.?hash|authorization|api.?key|private.?key|content",
+    r"pass(word)?|secret|token|access.?hash|authorization|api.?key|private.?key|content"
+    r"|^(key|cert|crt|cab|cabundle|csr)$|_key$",
     re.IGNORECASE,
 )
+PRIVATE_KEY_PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE)
 
 
 def redact(value: Any) -> Any:
@@ -24,6 +26,9 @@ def redact(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [redact(item) for item in value]
+    if isinstance(value, str) and PRIVATE_KEY_PEM.search(value):
+        # A private key must never reach the audit log, whatever the field is called.
+        return "[REDACTED]"
     if isinstance(value, str) and len(value) > 4096:
         return value[:4096] + "...[TRUNCATED]"
     return value

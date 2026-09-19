@@ -22,6 +22,19 @@ BLOCKED_FUNCTIONS = {
     "uapi_cpanel",
     "fetch_dkim_private_keys",
     "list_keys",
+    # Return private key material (SSL, GPG, DNSSEC and WHM SSL lookups).
+    "show_key",
+    "fetch_key_and_cabundle_for_certificate",
+    "fetch_vhost_ssl_components",
+    "fetchsslinfo",
+    "export_secret_key",
+    "export_zone_key",
+    "generate_key",
+    "generatessl",
+    # Take a private key as an argument; no capability may accept one.
+    "upload_key",
+    "install_ssl",
+    "installssl",
 }
 
 EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
@@ -58,12 +71,15 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
 }
 
 DESTRUCTIVE = re.compile(
-    r"(^|_)(delete|remove|kill|terminate|destroy|drop|erase|unlink|revoke|restore|reset)(_|$)"
+    r"(^|_)(delete|remove|kill|terminate|destroy|drop|erase|unlink|revoke|restore|reset"
+    r"|cancel|expunge|empty|clear)(_|$)"
     r"|remove_ip|deldb|deluser|delete_zone|killdns|removeacct|terminateacct",
     re.IGNORECASE,
 )
 WRITE = re.compile(
-    r"(^|_)(add|create|set|unset|update|edit|change|enable|disable|ensure|install|upload|save|suspend|unsuspend|start|stop|generate|provision|assign|unassign|hold|release|rebuild|toggle|rename|import|activate|deactivate|park|unpark)(_|$)"
+    r"(^|_)(add|create|set|unset|update|edit|change|enable|disable|ensure|install|upload|save|suspend|unsuspend|start|stop|generate|provision|assign|unassign|hold|release|rebuild|toggle|rename|import|activate|deactivate|park|unpark"
+    r"|process|enqueue|swap|configure|recreate|rescan|reorder|store|blacklist|whitelist|ignore"
+    r"|convert|resize|repair|register|unregister|publish|reinstate|dismiss|merge|nvset)(_|$)"
     r"|addpop|passwd|mkdir|save_file_content|suspendacct|unsuspendacct|createacct",
     re.IGNORECASE,
 )
@@ -71,24 +87,30 @@ WRITE = re.compile(
 # resetzone, savemxs). The boundary-based patterns above miss those, so a verb at the
 # start of the function name is also treated as a mutation.
 DESTRUCTIVE_PREFIX = re.compile(
-    r"^(del(?!iver)|delete|remove|kill|terminate|destroy|drop|erase|unlink|revoke|restore|reset)",
+    r"^(del(?!iver)|delete|remove|kill|terminate|destroy|drop|erase|unlink|revoke|restore|reset"
+    r"|cancel|expunge|empty|clear)",
     re.IGNORECASE,
 )
 WRITE_PREFIX = re.compile(
     r"^(add|create|set|unset|update|edit|change|enable|disable|ensure|install|upload|save"
     r"|suspend|unsuspend|start|stop|generate|provision|assign|unassign|hold|release|rebuild"
-    r"|toggle|rename|import|activate|deactivate|park|unpark)",
+    r"|toggle|rename|import|activate|deactivate|park|unpark"
+    r"|process|enqueue|swap|configure|recreate|reorder|store|blacklist|whitelist|ignore"
+    r"|convert|resize|repair|register|unregister|publish|reinstate|dismiss|merge|nvset|doimport)",
     re.IGNORECASE,
 )
 # Functions whose names start with a mutating verb but only read state.
-READ_OVERRIDES = frozenset({"installed_host", "installed_hosts"})
+READ_OVERRIDES = frozenset(
+    {"installed_host", "installed_hosts", "configured_modules", "poll_publish"}
+)
 PRIVILEGED = re.compile(
-    r"password|passwd|token|ssh|shell|privilege|acl|session|sudo|root|remote_whm|accesshash|private.?key|mycnf",
+    r"password|passwd|token|ssh|shell|privilege|acl|session|sudo|root|remote_whm|accesshash|private.?key|mycnf"
+    r"|^uapi\.Batch\.",
     re.IGNORECASE,
 )
 
 EXTERNAL_SIDE_EFFECT = re.compile(
-    r"send_|request_|fullbackup_to_|deliver_messages|disinfect_files", re.IGNORECASE
+    r"send_|request_|fullbackup_to_|deliver_messages|disinfect_files|dispatch_", re.IGNORECASE
 )
 
 SENSITIVE_READ = re.compile(
