@@ -717,7 +717,8 @@ def curated_capabilities() -> list[Capability]:
                 "uma URL http/https. Idempotente: o mesmo redirecionamento vira noop. Um "
                 "destino diferente para a mesma origem exige replace_existing (o cPanel não "
                 "edita: remove e recria, restaurando o antigo se a recriação falhar). Recusa "
-                "loops e URLs com credenciais."
+                "loops e URLs com credenciais. O modo www é conferido só entre sem www e com "
+                "www: o cPanel lê both e with_www da mesma forma."
             ),
             "schema": _schema(
                 {
