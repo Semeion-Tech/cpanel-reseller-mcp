@@ -463,3 +463,72 @@ async def test_typed_dns_workflow_rejects_out_of_range_ttl(harness, admin) -> No
             admin, "workflow.dns_a_ensure", "acctalpha", {**TYPED_ARGUMENTS["A"], "ttl": 5}
         )
     assert error.value.code == "INVALID_ARGUMENTS"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("record_type", ["A", "AAAA"])
+@pytest.mark.parametrize("name", ["_mcptest", "a_b", "-x", "x-", "app._sub", "a.*", "bad name"])
+async def test_a_and_aaaa_owner_names_that_bind_rejects_never_reach_cpanel(
+    record_type: str, name: str
+) -> None:
+    cpanel = ZoneCPanel()
+    workflows = DNSWorkflows(WorkflowHarness(cpanel))
+    address = "203.0.113.10" if record_type == "A" else "2001:db8::10"
+
+    with pytest.raises(CPanelError) as error:
+        await workflows.prepare_typed(
+            record_type,
+            "acctalpha",
+            {"zone": "example.com", "name": name, "address": address, "ttl": 300},
+        )
+
+    assert error.value.code == "DNS_INVALID_VALUE"
+    assert cpanel.writes == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("name", ["app", "a-b", "app.sub", "*", "*.sub", "x1", "@"])
+async def test_valid_host_owner_names_are_accepted(name: str) -> None:
+    workflows = DNSWorkflows(WorkflowHarness(ZoneCPanel()))
+    before = await workflows.prepare_typed(
+        "A",
+        "acctalpha",
+        {"zone": "example.com", "name": name, "address": "203.0.113.10", "ttl": 300},
+    )
+    assert before["plan"]["operation"] == "add"
+
+
+@pytest.mark.asyncio
+async def test_underscores_stay_valid_for_owner_names_of_other_record_types() -> None:
+    workflows = DNSWorkflows(WorkflowHarness(ZoneCPanel()))
+    srv = await workflows.prepare_typed(
+        "SRV",
+        "acctalpha",
+        {
+            "zone": "example.com",
+            "name": "_sip._tcp",
+            "priority": 10,
+            "weight": 5,
+            "port": 5060,
+            "target": "sip.example.com",
+            "ttl": 300,
+        },
+    )
+    txt = await workflows.prepare_txt(
+        "acctalpha", {"zone": "example.com", "name": "_dmarc", "value": "v=DMARC1", "ttl": 300}
+    )
+    assert srv["plan"]["operation"] == "add"
+    assert txt["plan"]["operation"] == "add"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("exchange", ["mail_server.example.com", "mx.-bad.example.com"])
+async def test_an_mx_target_with_an_underscore_is_rejected(exchange: str) -> None:
+    workflows = DNSWorkflows(WorkflowHarness(ZoneCPanel()))
+    with pytest.raises(CPanelError) as error:
+        await workflows.prepare_typed(
+            "MX",
+            "acctalpha",
+            {"zone": "example.com", "name": "@", "priority": 0, "exchange": exchange, "ttl": 300},
+        )
+    assert error.value.code == "DNS_INVALID_VALUE"

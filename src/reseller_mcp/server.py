@@ -13,6 +13,7 @@ from starlette.requests import Request
 from starlette.responses import JSONResponse
 
 from .config import Settings, get_settings
+from .cpanel import CPanelError
 from .harness import HarnessError
 from .models import ApiFamily, Risk
 from .runtime import ResellerTokenVerifier, Runtime, current_principal
@@ -29,7 +30,7 @@ action_prepare and explicit human approval. Never request private keys, credenti
 
 
 def _tool_error(exc: Exception) -> ToolError:
-    if isinstance(exc, HarnessError):
+    if isinstance(exc, (HarnessError, CPanelError)):
         return ToolError(f"{exc.code}: {exc}")
     return ToolError(f"INTERNAL_ERROR: {exc}")
 
