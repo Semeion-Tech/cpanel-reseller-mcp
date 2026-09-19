@@ -85,3 +85,17 @@ async def test_query_execute_returns_single_text_block_with_smaller_envelope(
     assert "normalized_data" in baseline[0].text
     assert "content_length_chars" in baseline[0].text
     assert "content_length_chars" in large[0].text
+
+
+def test_tool_errors_keep_the_typed_code_of_cpanel_and_harness_errors() -> None:
+    from reseller_mcp.cpanel import CPanelError
+    from reseller_mcp.harness import HarnessError
+    from reseller_mcp.server import _tool_error
+
+    assert str(_tool_error(CPanelError("record exists", code="DNS_RECORD_CONFLICT"))) == (
+        "DNS_RECORD_CONFLICT: record exists"
+    )
+    assert str(_tool_error(HarnessError("bad path", "PATH_OUTSIDE_ALLOWED_ROOT"))) == (
+        "PATH_OUTSIDE_ALLOWED_ROOT: bad path"
+    )
+    assert str(_tool_error(RuntimeError("boom"))) == "INTERNAL_ERROR: boom"

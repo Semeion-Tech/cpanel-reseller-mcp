@@ -354,3 +354,79 @@ async def test_txt_replace_and_allow_multiple_are_mutually_exclusive() -> None:
             "acct", {**TXT_ARGS, "replace_existing": True, "allow_multiple": True}
         )
     assert error.value.code == "DNS_INVALID_VALUE"
+
+
+LONG_DKIM = "v=DKIM1; k=rsa; p=" + "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A" * 20
+
+
+def _chunks(value: str) -> list[str]:
+    return [value[i : i + 255] for i in range(0, len(value), 255)]
+
+
+@pytest.mark.asyncio
+async def test_a_long_txt_value_is_sent_as_strings_of_at_most_255_characters() -> None:
+    assert len(LONG_DKIM) > 255
+    cpanel = RealShapeCPanel([])
+    before, result = await _txt(
+        cpanel,
+        {"zone": ZONE, "name": "default._domainkey", "value": LONG_DKIM, "ttl": 300},
+    )
+
+    sent = json.loads(cpanel.writes[0]["add"])["data"]
+    assert before["plan"]["operation"] == "add"
+    assert all(len(chunk) <= 255 for chunk in sent)
+    assert "".join(sent) == LONG_DKIM
+    assert result["verified"] is True
+
+
+@pytest.mark.asyncio
+async def test_a_txt_stored_in_several_strings_matches_its_joined_value() -> None:
+    cpanel = RealShapeCPanel([("default._domainkey", "TXT", _chunks(LONG_DKIM))])
+    before, result = await _txt(
+        cpanel,
+        {"zone": ZONE, "name": "default._domainkey", "value": LONG_DKIM, "ttl": 300},
+    )
+
+    assert before["plan"]["operation"] == "noop"
+    assert result["verified"] is True
+    assert cpanel.writes == []
+
+
+@pytest.mark.asyncio
+async def test_match_prefix_reads_a_multi_string_txt_as_one_value() -> None:
+    cpanel = RealShapeCPanel([("default._domainkey", "TXT", _chunks(LONG_DKIM))])
+    replacement = "v=DKIM1; k=rsa; p=NEWKEY"
+    before, result = await _txt(
+        cpanel,
+        {
+            "zone": ZONE,
+            "name": "default._domainkey",
+            "value": replacement,
+            "match_prefix": "v=DKIM1",
+            "ttl": 300,
+        },
+    )
+
+    assert before["plan"]["operation"] == "edit"
+    assert result["verified"] is True
+    assert cpanel.names() == [("default._domainkey", "TXT", [replacement])]
+
+
+@pytest.mark.asyncio
+async def test_a_multi_string_txt_is_removed_by_its_joined_value() -> None:
+    cpanel = RealShapeCPanel([("default._domainkey", "TXT", _chunks(LONG_DKIM))])
+    workflows = DNSWorkflows(WorkflowHarness(cpanel))
+    arguments = {
+        "zone": ZONE,
+        "name": "default._domainkey",
+        "record_type": "TXT",
+        "value": LONG_DKIM,
+    }
+    before = await workflows.prepare_remove("acct", arguments)
+    preparation = Preparation.model_construct(
+        account="acct", arguments=arguments, before_state=before
+    )
+    result = await workflows.execute_remove(preparation)
+
+    assert result["verified"] is True
+    assert cpanel.names() == []

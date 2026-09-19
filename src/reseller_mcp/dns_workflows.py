@@ -21,6 +21,12 @@ _HOSTNAME = re.compile(
     re.IGNORECASE,
 )
 _CAA_TAGS = ("issue", "issuewild", "iodef")
+# BIND check-names rejects anything but letters, digits and hyphens in the owner name of an
+# A or AAAA record and in an MX target (an underscore fails the whole zone), "*" being allowed
+# as a wildcard label.
+_HOST_LABEL = re.compile(r"^(\*|[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?)$")
+# A TXT string holds at most 255 octets; longer values are stored as several strings.
+_TXT_CHUNK = 255
 
 
 class DNSWorkflows:
@@ -61,6 +67,8 @@ class DNSWorkflows:
         zone = str(arguments["zone"])
         name = self._absolute(zone, str(arguments["name"]))
         wire_name = self._wire_name(zone, str(arguments["name"]))
+        if record_type in {"A", "AAAA"}:
+            self._check_host_owner(wire_name, zone)
         data = self._typed_data(record_type, arguments)
         wanted = self._normalize_data(record_type, data)
         current = await self._read_zone(account, zone)
@@ -112,6 +120,23 @@ class DNSWorkflows:
     def _invalid(message: str) -> CPanelError:
         return CPanelError(message, code="DNS_INVALID_VALUE", category="validation")
 
+    @classmethod
+    def _check_host_owner(cls, wire_name: str, zone: str) -> None:
+        """Refuse an A or AAAA owner name that BIND check-names would reject."""
+        if wire_name == f"{cls._canonical_name(zone)}.":
+            return
+        for index, label in enumerate(wire_name.split(".")):
+            if not _HOST_LABEL.match(label) or (label == "*" and index > 0):
+                raise cls._invalid(
+                    f"{label!r} is not a valid host name label for an A or AAAA record: only "
+                    "letters, digits and hyphens (or a leading *) are accepted, and an "
+                    "underscore makes cPanel reject the whole zone"
+                )
+
+    @staticmethod
+    def _txt_chunks(value: str) -> list[str]:
+        return [value[i : i + _TXT_CHUNK] for i in range(0, len(value), _TXT_CHUNK)] or [""]
+
     @staticmethod
     def _typed_data(record_type: str, arguments: dict[str, Any]) -> list[str]:
         invalid = DNSWorkflows._invalid
@@ -127,7 +152,7 @@ class DNSWorkflows:
         if record_type == "MX":
             return [
                 str(DNSWorkflows._bounded(arguments["priority"], "priority", 0, 65535)),
-                DNSWorkflows._fqdn(str(arguments["exchange"])),
+                DNSWorkflows._fqdn(str(arguments["exchange"]), strict=True),
             ]
         if record_type == "SRV":
             return [
@@ -160,7 +185,7 @@ class DNSWorkflows:
         return number
 
     @staticmethod
-    def _fqdn(value: str) -> str:
+    def _fqdn(value: str, *, strict: bool = False) -> str:
         host = value.strip()
         try:
             ipaddress.ip_address(host)
@@ -170,6 +195,11 @@ class DNSWorkflows:
             raise DNSWorkflows._invalid("a hostname is required, not an IP address")
         if not _HOSTNAME.match(host):
             raise DNSWorkflows._invalid(f"{value!r} is not a valid hostname")
+        if strict and not all(_HOST_LABEL.match(label) for label in host.rstrip(".").split(".")):
+            raise DNSWorkflows._invalid(
+                f"{value!r} is not a valid host name: only letters, digits and hyphens are "
+                "accepted in an MX target"
+            )
         return host.rstrip(".").casefold() + "."
 
     @classmethod
@@ -181,6 +211,8 @@ class DNSWorkflows:
                 return (str(ipaddress.ip_address(data[0].strip())),)
             if rtype == "CNAME":
                 return (cls._canonical_name(data[0]),)
+            if rtype == "TXT":
+                return ("".join(str(item) for item in data),)
             if rtype == "MX":
                 return (str(int(data[0])), cls._canonical_name(data[1]))
             if rtype == "SRV":
@@ -268,12 +300,12 @@ class DNSWorkflows:
             if self._absolute(zone, record["name"]) == name
             and record["record_type"].upper() == "TXT"
         ]
-        same_value = [record for record in matching if record["data"] == [value]]
+        same_value = [record for record in matching if "".join(record["data"]) == value]
         replace = bool(arguments.get("replace_existing", False))
         multiple = bool(arguments.get("allow_multiple", False))
         if replace and multiple:
             raise self._invalid("replace_existing and allow_multiple are mutually exclusive")
-        new_record = self._record(wire_name, int(arguments["ttl"]), "TXT", [value])
+        new_record = self._record(wire_name, int(arguments["ttl"]), "TXT", self._txt_chunks(value))
         plan: dict[str, Any]
         if same_value:
             plan = {"operation": "noop", "reason": "TXT already has the requested value"}
@@ -282,7 +314,7 @@ class DNSWorkflows:
         else:
             prefix = arguments.get("match_prefix")
             candidates = (
-                [record for record in matching if record["data"][0].startswith(str(prefix))]
+                [record for record in matching if "".join(record["data"]).startswith(str(prefix))]
                 if prefix
                 else matching
             )
