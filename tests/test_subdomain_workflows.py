@@ -99,6 +99,8 @@ async def test_subdomain_is_removed_with_the_underscore_spelling_and_verified() 
     assert before["subdomain"]["documentroot"] == "/home/acct/public_html/app"
     assert result["verified"] is True
     assert result["data"]["documentroot_left_in_place"] == "/home/acct/public_html/app"
+    assert result["data"]["domain_format_used"] == "app_example.com"
+    assert result["data"]["domain_format_style"] == "underscore"
     assert cpanel.subdomains == ["blog.example.com"]
     assert [args for name, args in cpanel.calls if name == "delsubdomain"] == [
         {"domain": "app_example.com"}
@@ -111,6 +113,8 @@ async def test_the_dotted_spelling_is_tried_when_the_underscore_one_is_refused()
     _, result = await _remove(cpanel, "APP.example.com.")
 
     assert result["verified"] is True
+    assert result["data"]["domain_format_used"] == "app.example.com"
+    assert result["data"]["domain_format_style"] == "dot"
     assert [args["domain"] for name, args in cpanel.calls if name == "delsubdomain"] == [
         "app_example.com",
         "app.example.com",
@@ -160,6 +164,7 @@ async def test_a_lost_response_after_the_removal_is_reconciled() -> None:
 
     assert result["verified"] is True
     assert result["data"]["reconciled_after_transport_error"] is True
+    assert result["data"]["domain_format_style"] == "underscore"
 
 
 @pytest.mark.asyncio

@@ -45,6 +45,7 @@ class SubdomainWorkflows:
         domain = before["domain"]
         subdomain = before["subdomain"]
         tried: list[str] = []
+        used: str | None = None
         error: CPanelError | None = None
         for form in self._forms(domain):
             tried.append(form)
@@ -53,13 +54,14 @@ class SubdomainWorkflows:
                     self._capability(), account, {"domain": form}, retry_safe=False
                 )
                 error = None
+                used = form
                 break
             except CPanelError as exc:
                 error = exc
                 if exc.code == "UPSTREAM_NETWORK_ERROR":
                     after = await self._list_after_ambiguous_write(account)
                     if not any(e["domain"] == domain for e in after):
-                        return self._result(domain, subdomain, after, reconciled=True)
+                        return self._result(domain, subdomain, after, form, reconciled=True)
                     raise self._unknown_write_error() from exc
         if error is not None:
             raise CPanelError(
@@ -70,13 +72,14 @@ class SubdomainWorkflows:
                 hint="cPanel refused every accepted spelling of the subdomain name.",
             ) from error
         after = await self._subdomains(account)
-        return self._result(domain, subdomain, after, reconciled=False)
+        return self._result(domain, subdomain, after, used, reconciled=False)
 
     def _result(
         self,
         domain: str,
         subdomain: dict[str, Any],
         after: list[dict[str, Any]],
+        used: str | None,
         *,
         reconciled: bool,
     ) -> dict[str, Any]:
@@ -84,6 +87,11 @@ class SubdomainWorkflows:
         data: dict[str, Any] = {
             "changed": True,
             "documentroot_left_in_place": subdomain.get("documentroot"),
+            # The spelling cPanel API 2 accepted; "underscore" is sub_example.com.
+            "domain_format_used": used,
+            "domain_format_style": (
+                None if used is None else "dot" if used == domain else "underscore"
+            ),
         }
         if reconciled:
             data["reconciled_after_transport_error"] = True
