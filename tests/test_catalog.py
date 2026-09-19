@@ -126,3 +126,27 @@ def test_redirect_and_domain_read_capabilities_are_typed_reads(tmp_path) -> None
     assert domains.risk == Risk.READ
     assert domains.input_schema["properties"]["format"]["enum"] == ["hash", "list"]
     assert domains.input_schema["additionalProperties"] is False
+
+
+SSL_READS = [
+    "uapi.SSL.installed_hosts",
+    "uapi.SSL.list_certs",
+    "uapi.SSL.get_autossl_problems",
+    "uapi.SSL.get_autossl_excluded_domains",
+    "uapi.SSL.get_autossl_pending_queue",
+    "uapi.SSL.is_autossl_check_in_progress",
+    "uapi.SSL.is_sni_supported",
+    "uapi.WebVhosts.list_ssl_capable_domains",
+]
+
+
+def test_ssl_inventory_and_autossl_reads_are_typed_viewer_reads(tmp_path) -> None:
+    capabilities = {item.id: item for item in Catalog(tmp_path / "missing.json").load()}
+
+    for operation in SSL_READS:
+        capability = capabilities[operation]
+        assert capability.curated is True, operation
+        assert capability.risk == Risk.READ, operation
+        assert capability.required_role == Role.VIEWER, operation
+        assert capability.sensitive_output is False, operation
+        assert capability.input_schema["additionalProperties"] is False, operation
