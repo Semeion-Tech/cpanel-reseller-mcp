@@ -216,3 +216,19 @@ def test_mutations_that_lack_a_verb_from_the_old_list_are_not_reads() -> None:
 def test_status_reads_named_like_mutations_stay_reads() -> None:
     assert classify("uapi.Sitejet.poll_publish")[0] == Risk.READ
     assert classify("uapi.ExternalAuthentication.configured_modules")[0] == Risk.READ
+
+
+def test_ssl_reads_declare_the_account_features_they_need(tmp_path) -> None:
+    capabilities = {item.id: item for item in Catalog(tmp_path / "missing.json").load()}
+
+    for operation in [
+        "uapi.SSL.installed_hosts",
+        "uapi.SSL.get_autossl_problems",
+        "uapi.SSL.get_autossl_pending_queue",
+        "uapi.SSL.is_autossl_check_in_progress",
+        "uapi.SSL.is_sni_supported",
+    ]:
+        assert capabilities[operation].required_features == ["sslinstall"], operation
+    assert capabilities["uapi.SSL.list_certs"].required_features == ["sslmanager"]
+    assert capabilities["uapi.SSL.get_autossl_excluded_domains"].required_features == []
+    assert capabilities["uapi.WebVhosts.list_ssl_capable_domains"].required_features == []

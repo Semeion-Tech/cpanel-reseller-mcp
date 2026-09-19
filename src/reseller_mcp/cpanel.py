@@ -41,14 +41,20 @@ class CPanelError(RuntimeError):
 
 def _operation_error(message: str) -> CPanelError:
     normalized = message.casefold()
-    if "do not have the feature" in normalized or (
-        "feature" in normalized and "disabled" in normalized
+    if (
+        "do not have the feature" in normalized
+        or "não tem o recurso" in normalized
+        or "nao tem o recurso" in normalized
+        or ("feature" in normalized and "disabled" in normalized)
     ):
         return CPanelError(
             message,
             code="ACCOUNT_FEATURE_UNAVAILABLE",
             category="account_configuration",
-            hint="Use capability_check for this account before retrying.",
+            hint=(
+                "The account's feature list does not include the feature this operation "
+                "needs; it can only be enabled in the account's package or feature list."
+            ),
         )
     if "provide" in normalized and "argument" in normalized:
         return CPanelError(
