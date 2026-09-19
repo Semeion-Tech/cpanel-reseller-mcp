@@ -92,6 +92,10 @@ class PolicyEngine:
 
         if capability.id == "api2.Fileman.listfiles":
             self._check_home_path(str(arguments["dir"]))
+        if capability.id == "api2.Fileman.mkdir":
+            self._check_write_path(str(arguments["path"]), allow_root=True)
+        if capability.id == "api2.Fileman.fileop":
+            self._check_write_path(str(arguments["sourcefiles"]), allow_root=False)
         if capability.id == "uapi.SubDomain.addsubdomain" and "dir" in arguments:
             self._check_subdomain_dir(str(arguments["dir"]))
 
@@ -122,6 +126,18 @@ class PolicyEngine:
         if invalid:
             raise PolicyError(
                 "the path must be relative to the account home and outside protected directories",
+                "PATH_OUTSIDE_ALLOWED_ROOT",
+            )
+
+    @classmethod
+    def _check_write_path(cls, value: str, *, allow_root: bool) -> None:
+        """A write target: one path inside public_html (public_html itself only if allowed)."""
+        cls._check_home_path(value)
+        segments = [part for part in value.strip().split("/") if part]
+        minimum = 1 if allow_root else 2
+        if len(segments) < minimum or segments[0] != "public_html" or "," in value:
+            raise PolicyError(
+                "the path must be a single path inside public_html",
                 "PATH_OUTSIDE_ALLOWED_ROOT",
             )
 
