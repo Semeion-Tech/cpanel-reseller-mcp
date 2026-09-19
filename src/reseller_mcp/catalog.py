@@ -95,6 +95,11 @@ ALIASES = {
     "workflow.dns_cname_ensure": "dns cname alias registro adicionar atualizar microsoft dkim",
     "workflow.dns_txt_ensure": "dns txt spf dmarc texto adicionar atualizar",
     "workflow.dns_record_remove": "dns registro remover excluir apagar",
+    "workflow.dns_a_ensure": "dns a ipv4 endereço apontar subdomínio registro adicionar atualizar",
+    "workflow.dns_aaaa_ensure": "dns aaaa ipv6 endereço apontar registro adicionar atualizar",
+    "workflow.dns_mx_ensure": "dns mx e-mail roteamento servidor prioridade registro adicionar",
+    "workflow.dns_srv_ensure": "dns srv serviço porta registro adicionar atualizar",
+    "workflow.dns_caa_ensure": "dns caa certificado autoridade letsencrypt registro adicionar",
     "uapi.Email.list_pops": "email emails caixas postais listar",
     "uapi.Email.add_pop": "email criar caixa postal",
     "uapi.Email.delete_pop": "email excluir caixa postal",
@@ -156,6 +161,15 @@ def curated_capabilities() -> list[Capability]:
     string = {"type": "string", "minLength": 1}
     integer = {"type": "integer", "minimum": 0}
     boolean_integer = {"type": "integer", "enum": [0, 1]}
+    dns_ttl = {"type": "integer", "minimum": 60, "maximum": 86400}
+    dns_common = {
+        "zone": string,
+        "name": string,
+        "ttl": dns_ttl,
+        "replace_existing": {"type": "boolean", "default": False},
+        "allow_multiple": {"type": "boolean", "default": False},
+    }
+    port_number = {"type": "integer", "minimum": 0, "maximum": 65535}
     definitions: list[dict[str, Any]] = [
         {
             "id": "whm.version",
@@ -506,11 +520,122 @@ def curated_capabilities() -> list[Capability]:
             ],
         },
         {
+            "id": "workflow.dns_a_ensure",
+            "title": "Garantir registro A",
+            "description": (
+                "Adiciona ou atualiza um registro A (IPv4) em uma zona DNS da conta. Se já "
+                "existir outro A no mesmo nome, exige replace_existing (edita o único "
+                "existente) ou allow_multiple (adiciona mais um valor). Recusa nomes que "
+                "já têm CNAME."
+            ),
+            "schema": _schema(
+                {**dns_common, "address": string}, ["zone", "name", "address", "ttl"]
+            ),
+            "examples": [
+                {"zone": "example.com", "name": "app", "address": "203.0.113.10", "ttl": 3600}
+            ],
+        },
+        {
+            "id": "workflow.dns_aaaa_ensure",
+            "title": "Garantir registro AAAA",
+            "description": (
+                "Adiciona ou atualiza um registro AAAA (IPv6) em uma zona DNS da conta, com "
+                "as mesmas regras de conflito do registro A."
+            ),
+            "schema": _schema(
+                {**dns_common, "address": string}, ["zone", "name", "address", "ttl"]
+            ),
+            "examples": [
+                {"zone": "example.com", "name": "app", "address": "2001:db8::10", "ttl": 3600}
+            ],
+        },
+        {
+            "id": "workflow.dns_mx_ensure",
+            "title": "Garantir registro MX",
+            "description": (
+                "Adiciona ou atualiza um registro MX na zona DNS da conta. Um MX diferente "
+                "no mesmo nome exige replace_existing ou allow_multiple (MX de backup). "
+                "Complementa uapi.Email.change_mx, que altera o roteamento de e-mail do cPanel."
+            ),
+            "schema": _schema(
+                {**dns_common, "priority": port_number, "exchange": string},
+                ["zone", "name", "priority", "exchange", "ttl"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "@",
+                    "priority": 0,
+                    "exchange": "example-com.mail.protection.outlook.com",
+                    "ttl": 3600,
+                    "replace_existing": True,
+                }
+            ],
+        },
+        {
+            "id": "workflow.dns_srv_ensure",
+            "title": "Garantir registro SRV",
+            "description": (
+                "Adiciona ou atualiza um registro SRV (serviço, como _sip._tcp) na zona DNS "
+                "da conta."
+            ),
+            "schema": _schema(
+                {
+                    **dns_common,
+                    "priority": port_number,
+                    "weight": port_number,
+                    "port": {"type": "integer", "minimum": 1, "maximum": 65535},
+                    "target": string,
+                },
+                ["zone", "name", "priority", "weight", "port", "target", "ttl"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "_sip._tcp",
+                    "priority": 10,
+                    "weight": 5,
+                    "port": 5060,
+                    "target": "sip.example.com",
+                    "ttl": 3600,
+                }
+            ],
+        },
+        {
+            "id": "workflow.dns_caa_ensure",
+            "title": "Garantir registro CAA",
+            "description": (
+                "Adiciona ou atualiza um registro CAA (autoridades certificadoras permitidas). "
+                "Tags diferentes coexistem; para a mesma tag exige replace_existing ou "
+                "allow_multiple."
+            ),
+            "schema": _schema(
+                {
+                    **dns_common,
+                    "flags": {"type": "integer", "enum": [0, 128], "default": 0},
+                    "tag": {"type": "string", "enum": ["issue", "issuewild", "iodef"]},
+                    "value": string,
+                },
+                ["zone", "name", "tag", "value", "ttl"],
+            ),
+            "examples": [
+                {
+                    "zone": "example.com",
+                    "name": "@",
+                    "tag": "issue",
+                    "value": "letsencrypt.org",
+                    "ttl": 3600,
+                }
+            ],
+        },
+        {
             "id": "workflow.dns_record_remove",
             "title": "Remover registro DNS",
             "description": (
                 "Remove exatamente um registro DNS identificado por zona, nome, tipo e valor; "
-                "usa serial e índice capturados na leitura anterior e valida a remoção."
+                "usa serial e índice capturados na leitura anterior e valida a remoção. Para "
+                "MX, SRV e CAA o valor é a lista de campos separados por espaço, como "
+                "'10 mail.example.com'."
             ),
             "schema": _schema(
                 {
