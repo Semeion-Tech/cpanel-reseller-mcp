@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import json
+import re
+from pathlib import Path
 
 from reseller_mcp.catalog import Catalog, classify
 from reseller_mcp.models import Risk, Role
@@ -67,3 +69,43 @@ def test_dns_and_mx_capabilities_have_typed_contracts(tmp_path) -> None:
     remove_schema = capabilities["workflow.dns_record_remove"].input_schema
     assert remove_schema["required"] == ["zone", "name", "record_type", "value"]
     assert remove_schema["additionalProperties"] is False
+
+
+def test_verbs_glued_to_their_object_are_not_plain_reads() -> None:
+    assert classify("uapi.SubDomain.addsubdomain")[0] == Risk.REVERSIBLE_WRITE
+    assert classify("whm.savemxs")[0] == Risk.REVERSIBLE_WRITE
+    assert classify("whm.editzonerecord")[0] == Risk.REVERSIBLE_WRITE
+    assert classify("whm.installssl")[0] == Risk.REVERSIBLE_WRITE
+    assert classify("uapi.Mysql.rename_database")[0] == Risk.REVERSIBLE_WRITE
+    assert classify("uapi.DNSSEC.import_zone_key")[0] == Risk.REVERSIBLE_WRITE
+    assert classify("whm.killpkg")[0] == Risk.DESTRUCTIVE
+    assert classify("whm.resetzone")[0] == Risk.DESTRUCTIVE
+    assert classify("whm.removezonerecord")[0] == Risk.DESTRUCTIVE
+    assert classify("whm.delpkgext")[0] == Risk.DESTRUCTIVE
+
+
+def test_read_operations_with_mutating_looking_names_stay_reads() -> None:
+    assert classify("uapi.SSL.installed_host")[0] == Risk.READ
+    assert classify("uapi.SSL.installed_hosts")[0] == Risk.READ
+    # "deliver" must not be mistaken for the "del" prefix of a delete operation.
+    assert classify("uapi.BoxTrapper.deliver_messages")[0] == Risk.EXTERNAL_SIDE_EFFECT
+
+
+def test_no_live_operation_starting_with_a_mutating_verb_is_classified_as_read() -> None:
+    live_path = Path(__file__).resolve().parents[1] / "data" / "live_operations.json"
+    mutating = re.compile(
+        r"^(add|del|delete|set|unset|save|create|remove|kill|park|unpark|edit|change|enable"
+        r"|disable|install|upload|rename|restore|reset|import|activate|deactivate|rebuild"
+        r"|generate|toggle)",
+        re.IGNORECASE,
+    )
+    read_only_names = {"installed_host", "installed_hosts"}
+    reads = [
+        item.id
+        for item in Catalog(live_path).load()
+        if not item.curated
+        and item.risk == Risk.READ
+        and item.function not in read_only_names
+        and mutating.search(item.function)
+    ]
+    assert reads == []
