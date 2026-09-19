@@ -415,7 +415,10 @@ class Harness:
                     warnings = list(data.get("warnings") or [])
                 else:
                     data = await self.cpanel.call(
-                        capability, preparation.account, preparation.arguments, retry_safe=False
+                        capability,
+                        preparation.account,
+                        self._call_arguments(capability, preparation),
+                        retry_safe=False,
                     )
                     after_state, verified, warnings = await self._verify(
                         capability,
@@ -796,6 +799,21 @@ class Harness:
         verified = self._evaluate_postcondition(capability, arguments, after)
         return after, verified, [] if verified else ["Postcondition did not match requested state"]
 
+    @staticmethod
+    def _call_arguments(capability: Capability, preparation: Preparation) -> dict[str, Any]:
+        """Arguments as cPanel needs them.
+
+        cPanel reads a relative destfiles from public_html rather than from the home (a copy to
+        "public_html/x" landed in "public_html/public_html/x"), so copy and move send both
+        paths absolute, built from the account home read at preparation.
+        """
+        arguments = dict(preparation.arguments)
+        home = (preparation.before_state or {}).get("home")
+        if capability.id == "api2.Fileman.fileop" and arguments.get("op") != "trash" and home:
+            for field in ("sourcefiles", "destfiles"):
+                arguments[field] = f"{home}/{str(arguments[field]).strip().strip('/')}"
+        return arguments
+
     async def _list_names(self, account: str | None, directory: str) -> list[dict[str, Any]] | None:
         listing = self._get_capability("api2.Fileman.listfiles")
         try:
@@ -844,7 +862,12 @@ class Harness:
             raise HarnessError(
                 f"{destination} already holds an item named {source_name}", "DESTINATION_EXISTS"
             )
+        source_relative = str(arguments["sourcefiles"]).strip().strip("/")
+        source_entry = next(e for e in source_entries if e.get("file") == source_name)
+        full = str(source_entry.get("fullpath") or "")
+        home = full[: -len(source_relative)].rstrip("/") if full.endswith(source_relative) else None
         return {
+            "home": home,
             "source_parent": [e.get("file") for e in source_entries],
             "destination_parent": [e.get("file") for e in destination_parent_entries],
             "destination": None

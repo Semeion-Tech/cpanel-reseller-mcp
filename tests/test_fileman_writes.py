@@ -21,6 +21,16 @@ class FilesCPanel:
         self.calls: list[tuple[str, dict[str, Any]]] = []
         self.silently_ignore_writes = False
 
+    HOME = "/home2/acct"
+
+    def _strip_home(self, path: str) -> str:
+        return path.removeprefix(f"{self.HOME}/").strip("/")
+
+    def _resolve_destination(self, path: str) -> str:
+        if path.startswith(f"{self.HOME}/"):
+            return self._strip_home(path)
+        return f"public_html/{path.strip('/')}"
+
     async def call(self, capability, account, arguments, *, retry_safe=False):
         name = capability.id.rsplit(".", 1)[-1]
         self.calls.append((name, dict(arguments)))
@@ -50,11 +60,12 @@ class FilesCPanel:
             self.entries.setdefault(f"{parent}/{arguments['name']}", [])
             return []
         if name == "fileop":
-            source = arguments["sourcefiles"].strip("/")
+            source = self._strip_home(arguments["sourcefiles"])
             parent, _, base = source.rpartition("/")
             kind = next((k for f, k in self.entries.get(parent, []) if f == base), "dir")
             if arguments["op"] in {"copy", "move"}:
-                destination = arguments["destfiles"].strip("/")
+                # Live behaviour: a relative destfiles is read from public_html, not the home.
+                destination = self._resolve_destination(arguments["destfiles"])
                 if destination in self.entries:  # an existing directory receives the item
                     self.entries[destination].append((base, kind))
                     self.entries[f"{destination}/{base}"] = list(self.entries.get(source, []))
@@ -359,3 +370,33 @@ async def test_copy_and_move_never_overwrite_and_need_an_existing_source(
         await harness.prepare_action(admin, "api2.Fileman.fileop", "acctalpha", arguments)
     assert error.value.code == code
     assert not any(name in {"fileop"} for name, _ in harness.cpanel.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("op", ["copy", "move"])
+async def test_copy_and_move_send_absolute_paths_built_from_the_account_home(
+    harness, admin, op: str
+) -> None:
+    harness.cpanel = FilesCPanel({"public_html": [("a", "dir")]})
+    result = await _run_fileop(
+        harness, admin, {"op": op, "sourcefiles": "public_html/a", "destfiles": "public_html/b"}
+    )
+
+    assert (result.ok, result.verified) == (True, True)
+    sent = next(args for name, args in harness.cpanel.calls if name == "fileop")
+    assert sent == {
+        "op": op,
+        "sourcefiles": "/home2/acct/public_html/a",
+        "destfiles": "/home2/acct/public_html/b",
+    }
+    assert {e[0] for e in harness.cpanel.entries["public_html"]} >= {"b"}
+    assert "public_html" not in harness.cpanel.entries.get("public_html", [])
+
+
+@pytest.mark.asyncio
+async def test_trash_keeps_the_relative_source_path(harness, admin) -> None:
+    harness.cpanel = FilesCPanel({"public_html": [("a", "dir")]})
+    await _run_fileop(harness, admin, {"op": "trash", "sourcefiles": "public_html/a"})
+
+    sent = next(args for name, args in harness.cpanel.calls if name == "fileop")
+    assert sent == {"op": "trash", "sourcefiles": "public_html/a"}
