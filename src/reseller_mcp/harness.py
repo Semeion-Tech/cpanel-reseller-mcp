@@ -418,7 +418,11 @@ class Harness:
                         capability, preparation.account, preparation.arguments, retry_safe=False
                     )
                     after_state, verified, warnings = await self._verify(
-                        capability, preparation.account, preparation.arguments, data
+                        capability,
+                        preparation.account,
+                        preparation.arguments,
+                        data,
+                        preparation.before_state,
                     )
                 payload = {
                     "data": data,
@@ -721,6 +725,8 @@ class Harness:
             if hook is None:
                 return None
             return await hook(account, arguments)
+        if capability.id == "api2.Fileman.fileop" and arguments.get("op") != "trash":
+            return await self._fileop_before_state(account, arguments)
         snapshot = self._snapshot_capability(capability, arguments)
         if not snapshot:
             return None
@@ -769,7 +775,10 @@ class Harness:
         account: str | None,
         arguments: dict[str, Any],
         data: Any,
+        before_state: dict[str, Any] | None = None,
     ) -> tuple[Any, bool | None, list[str]]:
+        if capability.id == "api2.Fileman.fileop" and arguments.get("op") != "trash":
+            return await self._verify_fileop(account, arguments, before_state or {})
         snapshot = self._snapshot_capability(capability, arguments)
         if not snapshot:
             return (
@@ -786,6 +795,105 @@ class Harness:
             return None, False, [f"Postcondition read failed: {exc.code}"]
         verified = self._evaluate_postcondition(capability, arguments, after)
         return after, verified, [] if verified else ["Postcondition did not match requested state"]
+
+    async def _list_names(self, account: str | None, directory: str) -> list[dict[str, Any]] | None:
+        listing = self._get_capability("api2.Fileman.listfiles")
+        try:
+            result = await self.cpanel.call(
+                listing, account, {"dir": directory or "."}, retry_safe=True
+            )
+        except CPanelError:
+            return None
+        return [
+            item for item in (result if isinstance(result, list) else []) if isinstance(item, dict)
+        ]
+
+    @staticmethod
+    def _split(path: str) -> tuple[str, str]:
+        parent, _, name = path.strip().strip("/").rpartition("/")
+        return parent, name
+
+    async def _fileop_before_state(
+        self, account: str | None, arguments: dict[str, Any]
+    ) -> dict[str, Any]:
+        """State a copy or move starts from; refuses anything that would overwrite."""
+        source_parent, source_name = self._split(str(arguments["sourcefiles"]))
+        destination = str(arguments["destfiles"]).strip().strip("/")
+        destination_parent, destination_name = self._split(destination)
+        source_entries = await self._list_names(account, source_parent)
+        destination_parent_entries = await self._list_names(account, destination_parent)
+        destination_entries = await self._list_names(account, destination)
+        if source_entries is None or source_name not in {e.get("file") for e in source_entries}:
+            raise HarnessError(
+                f"the source {arguments['sourcefiles']} does not exist", "SOURCE_NOT_FOUND"
+            )
+        if destination_parent_entries is None:
+            raise HarnessError(
+                "the destination's parent directory does not exist", "DESTINATION_PARENT_MISSING"
+            )
+        existing = next(
+            (e for e in destination_parent_entries if e.get("file") == destination_name), None
+        )
+        if existing is not None and existing.get("type") != "dir":
+            raise HarnessError(
+                f"{destination} is an existing file and would be overwritten", "DESTINATION_EXISTS"
+            )
+        if existing is not None and source_name in {
+            e.get("file") for e in destination_entries or []
+        }:
+            raise HarnessError(
+                f"{destination} already holds an item named {source_name}", "DESTINATION_EXISTS"
+            )
+        return {
+            "source_parent": [e.get("file") for e in source_entries],
+            "destination_parent": [e.get("file") for e in destination_parent_entries],
+            "destination": None
+            if destination_entries is None
+            else [e.get("file") for e in destination_entries],
+        }
+
+    async def _verify_fileop(
+        self, account: str | None, arguments: dict[str, Any], before: dict[str, Any]
+    ) -> tuple[Any, bool | None, list[str]]:
+        """Confirm a copy or move by what is new, whichever way cPanel reads the destination.
+
+        The destination is either the final path of the item (a new entry named like it appears
+        in its parent) or an existing directory that receives the item (a new entry named like
+        the source appears inside it). A move must also have left its source.
+        """
+        source_parent, source_name = self._split(str(arguments["sourcefiles"]))
+        destination = str(arguments["destfiles"]).strip().strip("/")
+        destination_parent, destination_name = self._split(destination)
+        parent_after = await self._list_names(account, destination_parent)
+        inside_after = await self._list_names(account, destination)
+        names_parent = {e.get("file") for e in parent_after or []}
+        names_inside = {e.get("file") for e in inside_after or []}
+        as_final_path = destination_name in names_parent and destination_name not in (
+            before.get("destination_parent") or []
+        )
+        as_directory = source_name in names_inside and source_name not in (
+            before.get("destination") or []
+        )
+        placed = as_final_path or as_directory
+        warnings: list[str] = []
+        if arguments["op"] == "move":
+            remaining = await self._list_names(account, source_parent)
+            gone = remaining is not None and source_name not in {e.get("file") for e in remaining}
+            if not gone:
+                warnings.append("the source is still present after the move")
+            placed = placed and gone
+        if not placed:
+            warnings.append("the destination does not hold the new item after the operation")
+        after = {
+            "placed_as": "final_path"
+            if as_final_path
+            else "inside_directory"
+            if as_directory
+            else None,
+            "destination_entries": sorted(str(n) for n in names_inside),
+            "destination_parent_entries": sorted(str(n) for n in names_parent),
+        }
+        return after, placed, warnings
 
     @staticmethod
     def _evaluate_postcondition(
