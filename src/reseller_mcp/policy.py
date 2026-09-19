@@ -41,7 +41,7 @@ class PolicyEngine:
                 f"{capability.id} requires role {capability.required_role.value}",
                 "INSUFFICIENT_ROLE",
             )
-        if capability.api.value in {"uapi", "workflow"} and not account:
+        if capability.api.value in {"uapi", "api2", "workflow"} and not account:
             raise PolicyError("this capability requires an account", "ACCOUNT_REQUIRED")
         inferred_account = account
         if inferred_account is None and capability.function != "createacct":
@@ -90,6 +90,8 @@ class PolicyEngine:
                     "SENSITIVE_TARGET_BLOCKED",
                 )
 
+        if capability.id == "api2.Fileman.listfiles":
+            self._check_home_path(str(arguments["dir"]))
         if capability.id == "uapi.SubDomain.addsubdomain" and "dir" in arguments:
             self._check_subdomain_dir(str(arguments["dir"]))
 
@@ -97,6 +99,30 @@ class PolicyEngine:
         if capability.function == "createacct" and "*" not in principal.account_scopes:
             raise PolicyError(
                 "creating accounts requires global reseller scope", "GLOBAL_SCOPE_REQUIRED"
+            )
+
+    # Directories that hold keys, mail, or panel state and are never a target.
+    _PROTECTED_SEGMENTS = frozenset(
+        {".ssh", ".gnupg", ".cpanel", ".cagefs", "etc", "mail", "ssl", ".htpasswds"}
+    )
+
+    @classmethod
+    def _check_home_path(cls, value: str) -> None:
+        """A path relative to the account home, without traversal or protected directories."""
+        text = value.strip()
+        segments = [part for part in text.split("/") if part]
+        invalid = (
+            not text
+            or text.startswith("/")
+            or "\\" in text
+            or "\x00" in text
+            or any(part == ".." for part in segments)
+            or any(part in cls._PROTECTED_SEGMENTS for part in segments)
+        )
+        if invalid:
+            raise PolicyError(
+                "the path must be relative to the account home and outside protected directories",
+                "PATH_OUTSIDE_ALLOWED_ROOT",
             )
 
     @staticmethod

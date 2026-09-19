@@ -266,7 +266,7 @@ class AccountWorkflows:
             "required_features": capability.required_features,
             "features": {},
         }
-        if capability.api.value == "uapi" and not username:
+        if capability.api.value in {"uapi", "api2"} and not username:
             checks["account_required"] = True
         base_ready = bool(
             checks["server_available"]

@@ -96,3 +96,148 @@ def test_missing_account_feature_is_recognized_in_english_and_portuguese(message
 
     assert error.code == "ACCOUNT_FEATURE_UNAVAILABLE"
     assert error.category == "account_configuration"
+
+
+def _api2_capability(function: str = "listfiles", risk: Risk = Risk.READ) -> Capability:
+    return Capability(
+        id=f"api2.Fileman.{function}",
+        api=ApiFamily.API2,
+        module="Fileman",
+        function=function,
+        title=function,
+        description="test",
+        risk=risk,
+        required_role=Role.VIEWER,
+        upstream_profile="reader",
+        input_schema={"type": "object"},
+        schema_source="test",
+        curated=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_api2_is_sent_through_the_whm_cpanel_function(settings) -> None:
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        seen["path"] = request.url.path
+        seen["params"] = dict(request.url.params)
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"result": 1},
+                "data": {
+                    "cpanelresult": {
+                        "apiversion": 2,
+                        "event": {"result": 1},
+                        "data": [{"file": "index.html", "type": "file"}],
+                    }
+                },
+            },
+        )
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+    result = await client.call(_api2_capability(), "acctalpha", {"dir": "public_html"})
+
+    assert seen["method"] == "GET"
+    assert seen["path"] == "/json-api/cpanel"
+    assert seen["params"] == {
+        "api.version": "1",
+        "cpanel_jsonapi_user": "acctalpha",
+        "cpanel_jsonapi_apiversion": "2",
+        "cpanel_jsonapi_module": "Fileman",
+        "cpanel_jsonapi_func": "listfiles",
+        "dir": "public_html",
+    }
+    assert result == [{"file": "index.html", "type": "file"}]
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        {"metadata": {"result": 1}, "cpanelresult": {"event": {"result": 1}, "data": ["x"]}},
+        {"metadata": {"result": 1}, "data": ["x"]},
+    ],
+)
+async def test_api2_result_is_unwrapped_wherever_it_is_nested(settings, payload) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=payload)
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+    assert await client.call(_api2_capability(), "acctalpha", {"dir": "x"}) == ["x"]
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api2_failure_inside_the_result_is_an_error(settings) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={
+                "metadata": {"result": 1},
+                "data": {
+                    "cpanelresult": {"event": {"result": 0}, "error": "Directory does not exist"}
+                },
+            },
+        )
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+    with pytest.raises(CPanelError) as error:
+        await client.call(_api2_capability(), "acctalpha", {"dir": "missing"})
+    assert error.value.code == "UPSTREAM_OPERATION_FAILED"
+    assert "Directory does not exist" in str(error.value)
+    await client.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("module", "function"),
+    [("Email", "listpops"), ("Fileman", "getdir"), ("Cron", "add_line"), ("Fileman", "savefile")],
+)
+async def test_api2_functions_outside_the_allowlist_are_never_sent(
+    settings, module: str, function: str
+) -> None:
+    calls: list[httpx.Request] = []
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        calls.append(request)
+        return httpx.Response(200, json={"metadata": {"result": 1}, "data": {}})
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+    capability = _api2_capability().model_copy(update={"module": module, "function": function})
+
+    with pytest.raises(CPanelError) as error:
+        await client.call(capability, "acctalpha", {})
+
+    assert error.value.code == "API2_FUNCTION_NOT_ALLOWED"
+    assert calls == []
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api2_requires_an_account(settings) -> None:
+    client = CPanelClient(settings, transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    with pytest.raises(CPanelError) as error:
+        await client.call(_api2_capability(), None, {})
+    assert error.value.code == "ACCOUNT_REQUIRED"
+    await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api2_writes_are_posted_like_uapi_writes(settings) -> None:
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["method"] = request.method
+        return httpx.Response(
+            200, json={"metadata": {"result": 1}, "data": {"cpanelresult": {"data": []}}}
+        )
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+    await client.call(_api2_capability("mkdir", Risk.REVERSIBLE_WRITE), "acctalpha", {})
+
+    assert seen["method"] == "POST"
+    await client.close()

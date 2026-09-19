@@ -232,3 +232,17 @@ def test_ssl_reads_declare_the_account_features_they_need(tmp_path) -> None:
     assert capabilities["uapi.SSL.list_certs"].required_features == ["sslmanager"]
     assert capabilities["uapi.SSL.get_autossl_excluded_domains"].required_features == []
     assert capabilities["uapi.WebVhosts.list_ssl_capable_domains"].required_features == []
+
+
+def test_api2_listfiles_is_curated_read_and_ignores_the_live_inventory() -> None:
+    live_path = Path(__file__).resolve().parents[1] / "data" / "live_operations.json"
+    capabilities = {item.id: item for item in Catalog(live_path).load()}
+
+    capability = capabilities["api2.Fileman.listfiles"]
+    assert capability.curated is True
+    assert capability.available is True
+    assert capability.risk == Risk.READ
+    assert capability.required_role == Role.VIEWER
+    assert capability.api.value == "api2"
+    assert capability.input_schema["required"] == ["dir"]
+    assert capability.input_schema["additionalProperties"] is False
