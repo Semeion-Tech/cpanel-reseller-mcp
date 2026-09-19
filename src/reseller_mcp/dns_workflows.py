@@ -269,9 +269,16 @@ class DNSWorkflows:
             and record["record_type"].upper() == "TXT"
         ]
         same_value = [record for record in matching if record["data"] == [value]]
+        replace = bool(arguments.get("replace_existing", False))
+        multiple = bool(arguments.get("allow_multiple", False))
+        if replace and multiple:
+            raise self._invalid("replace_existing and allow_multiple are mutually exclusive")
+        new_record = self._record(wire_name, int(arguments["ttl"]), "TXT", [value])
         plan: dict[str, Any]
         if same_value:
             plan = {"operation": "noop", "reason": "TXT already has the requested value"}
+        elif multiple:
+            plan = {"operation": "add", "record": new_record}
         else:
             prefix = arguments.get("match_prefix")
             candidates = (
@@ -281,11 +288,22 @@ class DNSWorkflows:
             )
             if len(candidates) > 1 or (matching and not candidates):
                 raise CPanelError(
-                    "the TXT record is ambiguous; provide match_prefix",
+                    "the TXT record is ambiguous; provide match_prefix or set allow_multiple "
+                    "to add another value",
                     code="DNS_TXT_RECORD_AMBIGUOUS",
                     category="validation",
                 )
             if candidates:
+                # Overwriting an existing TXT (SPF, verification tokens...) must be an explicit
+                # choice: either select it by prefix or ask to replace the single existing one.
+                if not (prefix or replace):
+                    raise CPanelError(
+                        "a TXT record already exists at this name; set replace_existing to "
+                        "overwrite it, match_prefix to select it, or allow_multiple to add "
+                        "another value",
+                        code="DNS_RECORD_CONFLICT",
+                        category="validation",
+                    )
                 line_index = candidates[0].get("line_index")
                 if line_index is None:
                     raise CPanelError(
@@ -296,19 +314,10 @@ class DNSWorkflows:
                 plan = {
                     "operation": "edit",
                     "line_index": line_index,
-                    "record": self._record(wire_name, int(arguments["ttl"]), "TXT", [value]),
+                    "record": new_record,
                 }
-            elif matching and not arguments.get("replace_existing", False):
-                raise CPanelError(
-                    "a TXT record already exists; set replace_existing and match_prefix",
-                    code="DNS_RECORD_CONFLICT",
-                    category="validation",
-                )
             else:
-                plan = {
-                    "operation": "add",
-                    "record": self._record(wire_name, int(arguments["ttl"]), "TXT", [value]),
-                }
+                plan = {"operation": "add", "record": new_record}
         return {"zone": zone, "serial": self._serial(current), "records": records, "plan": plan}
 
     async def execute_txt(self, preparation: Preparation) -> dict[str, Any]:
