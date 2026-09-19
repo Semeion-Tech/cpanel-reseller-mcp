@@ -33,6 +33,7 @@ from .mysql_client import MySQLProvisionError
 from .normalizer import normalize_result
 from .observability import OperationMetrics
 from .policy import PolicyEngine, PolicyError
+from .redirect_workflows import RedirectWorkflows
 
 
 class HarnessError(RuntimeError):
@@ -73,6 +74,7 @@ class Harness:
         ] = {}
         self.database = DatabaseWorkflows(self)
         self.dns = DNSWorkflows(self)
+        self.redirects = RedirectWorkflows(self)
         self._workflow_query_hooks["database.query_readonly"] = self.database.query_readonly
         self._workflow_prepare_hooks["database.transaction_execute"] = (
             self.database.prepare_transaction
@@ -92,6 +94,10 @@ class Harness:
         self._workflow_execute_hooks["workflow.dns_txt_ensure"] = self.dns.execute_txt
         self._workflow_prepare_hooks["workflow.dns_record_remove"] = self.dns.prepare_remove
         self._workflow_execute_hooks["workflow.dns_record_remove"] = self.dns.execute_remove
+        self._workflow_prepare_hooks["workflow.redirect_ensure"] = self.redirects.prepare_ensure
+        self._workflow_execute_hooks["workflow.redirect_ensure"] = self.redirects.execute_ensure
+        self._workflow_prepare_hooks["workflow.redirect_remove"] = self.redirects.prepare_remove
+        self._workflow_execute_hooks["workflow.redirect_remove"] = self.redirects.execute_remove
         for record_type in DNSWorkflows.ENSURE_TYPES:
             capability_id = f"workflow.dns_{record_type.lower()}_ensure"
             self._workflow_prepare_hooks[capability_id] = self.dns.prepare_hook(record_type)
@@ -738,6 +744,9 @@ class Harness:
         if capability.api == ApiFamily.UAPI and capability.module == "Email":
             listing = self._get_capability("uapi.Email.list_pops")
             return listing, None, {"domain": arguments.get("domain")}
+        if capability.id == "uapi.SubDomain.addsubdomain":
+            listing = self._get_capability("uapi.DomainInfo.domains_data")
+            return listing, None, {"format": "hash"}
         if capability.id == "uapi.Fileman.save_file_content":
             read = self._get_capability("uapi.Fileman.get_file_content")
             return read, None, {"dir": arguments.get("dir"), "file": arguments.get("file")}
@@ -805,6 +814,9 @@ class Harness:
             return str(arguments.get("email", "")).lower() in serialized
         if capability.module == "Email" and capability.function == "delete_pop":
             return str(arguments.get("email", "")).lower() not in serialized
+        if capability.id == "uapi.SubDomain.addsubdomain":
+            full_name = f"{arguments.get('domain', '')}.{arguments.get('rootdomain', '')}"
+            return full_name.lower() in serialized
         if capability.id == "uapi.Fileman.save_file_content":
             expected_content = str(arguments.get("content", "")).lower()
             return expected_content in serialized or expected_content == str(after).lower()

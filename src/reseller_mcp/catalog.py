@@ -129,6 +129,9 @@ ALIASES = {
     "uapi.Fileman.save_file_content": "arquivo salvar escrever conteúdo",
     "uapi.Fileman.list_files": "arquivos diretórios inventário listar",
     "uapi.Email.list_mxs": "email mx roteamento servidor",
+    "workflow.redirect_ensure": "redirecionamento redirect domínio url apontar 301 302 criar",
+    "workflow.redirect_remove": "redirecionamento redirect domínio remover excluir apagar",
+    "uapi.SubDomain.addsubdomain": "subdomínio criar adicionar subdomain document root",
     "uapi.Mime.list_redirects": "redirecionamento redirect htaccess 301 302 domínio url listar",
     "uapi.DomainInfo.domains_data": "domínios document root docroot subdomínios addon hospedagem",
     "uapi.Email.list_forwarders": "email encaminhadores redirecionamentos",
@@ -705,6 +708,76 @@ def curated_capabilities() -> list[Capability]:
                     "value": "selector1-example-com._domainkey.tenant.n-v1.dkim.mail.microsoft",
                 }
             ],
+        },
+        {
+            "id": "workflow.redirect_ensure",
+            "title": "Garantir redirecionamento de domínio",
+            "description": (
+                "Cria um redirecionamento de um domínio da conta (ou de um caminho dele) para "
+                "uma URL http/https. Idempotente: o mesmo redirecionamento vira noop. Um "
+                "destino diferente para a mesma origem exige replace_existing (o cPanel não "
+                "edita: remove e recria, restaurando o antigo se a recriação falhar). Recusa "
+                "loops e URLs com credenciais."
+            ),
+            "schema": _schema(
+                {
+                    "domain": string,
+                    "destination": string,
+                    "src": {"type": "string", "minLength": 1, "default": "/"},
+                    "type": {"type": "string", "enum": ["permanent", "temp"]},
+                    "wildcard": {"type": "boolean", "default": False},
+                    "www": {"type": "string", "enum": ["both", "without_www", "with_www"]},
+                    "replace_existing": {"type": "boolean", "default": False},
+                },
+                ["domain", "destination"],
+            ),
+            "examples": [
+                {"domain": "example.com", "destination": "https://www.example.org/"},
+                {
+                    "domain": "example.com",
+                    "src": "/old",
+                    "destination": "https://example.com/new",
+                    "type": "temp",
+                },
+            ],
+        },
+        {
+            "id": "workflow.redirect_remove",
+            "title": "Remover redirecionamento de domínio",
+            "description": (
+                "Remove exatamente um redirecionamento, identificado por domínio, caminho de "
+                "origem e destino, e confirma que ele saiu da listagem."
+            ),
+            "schema": _schema(
+                {
+                    "domain": string,
+                    "destination": string,
+                    "src": {"type": "string", "minLength": 1, "default": "/"},
+                },
+                ["domain", "destination"],
+            ),
+            "examples": [{"domain": "example.com", "destination": "https://www.example.org/"}],
+        },
+        {
+            "id": "uapi.SubDomain.addsubdomain",
+            "title": "Criar subdomínio",
+            "description": (
+                "Cria um subdomínio de um domínio que já existe na conta. O document root "
+                "(dir) fica confinado a public_html. Confirma pela listagem de domínios."
+            ),
+            "schema": _schema(
+                {
+                    "domain": {
+                        "type": "string",
+                        "pattern": "^[A-Za-z0-9]([A-Za-z0-9-]{0,61}[A-Za-z0-9])?$",
+                    },
+                    "rootdomain": string,
+                    "dir": string,
+                    "canoff": boolean_integer,
+                },
+                ["domain", "rootdomain"],
+            ),
+            "examples": [{"domain": "app", "rootdomain": "example.com", "dir": "public_html/app"}],
         },
         {
             "id": "uapi.Fileman.get_file_content",
