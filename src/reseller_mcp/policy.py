@@ -95,7 +95,7 @@ class PolicyEngine:
         if capability.id == "api2.Fileman.mkdir":
             self._check_write_path(str(arguments["path"]), allow_root=True)
         if capability.id == "api2.Fileman.fileop":
-            self._check_write_path(str(arguments["sourcefiles"]), allow_root=False)
+            self._check_fileop(arguments)
         if capability.id == "uapi.SubDomain.addsubdomain" and "dir" in arguments:
             self._check_subdomain_dir(str(arguments["dir"]))
 
@@ -127,6 +127,28 @@ class PolicyEngine:
             raise PolicyError(
                 "the path must be relative to the account home and outside protected directories",
                 "PATH_OUTSIDE_ALLOWED_ROOT",
+            )
+
+    @classmethod
+    def _check_fileop(cls, arguments: dict[str, Any]) -> None:
+        """trash takes one source; copy and move take a source and a destination."""
+        source = str(arguments["sourcefiles"])
+        cls._check_write_path(source, allow_root=False)
+        destination = arguments.get("destfiles")
+        if arguments["op"] == "trash":
+            if destination is not None:
+                raise PolicyError(
+                    "destfiles is only accepted by copy and move", "INVALID_ARGUMENTS"
+                )
+            return
+        if not destination:
+            raise PolicyError(f"{arguments['op']} requires destfiles", "INVALID_ARGUMENTS")
+        cls._check_write_path(str(destination), allow_root=True)
+        src = "/".join(part for part in source.strip().split("/") if part)
+        dest = "/".join(part for part in str(destination).strip().split("/") if part)
+        if dest == src or dest.startswith(f"{src}/"):
+            raise PolicyError(
+                "the destination cannot be the source or inside it", "PATH_OUTSIDE_ALLOWED_ROOT"
             )
 
     @classmethod

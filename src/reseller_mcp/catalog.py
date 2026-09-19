@@ -152,7 +152,7 @@ ALIASES = {
     "uapi.Fileman.list_files": "arquivos diretórios inventário listar",
     "api2.Fileman.listfiles": "arquivos diretórios pastas listar api2 home public_html",
     "api2.Fileman.mkdir": "criar diretório pasta mkdir api2 public_html",
-    "api2.Fileman.fileop": "apagar excluir remover lixeira mover arquivo diretório trash",
+    "api2.Fileman.fileop": "apagar excluir remover lixeira mover copiar arquivo diretório trash",
     "uapi.Email.list_mxs": "email mx roteamento servidor",
     "workflow.redirect_ensure": "redirecionamento redirect domínio url apontar 301 302 criar",
     "workflow.redirect_remove": "redirecionamento redirect domínio remover excluir apagar",
@@ -876,17 +876,27 @@ def curated_capabilities() -> list[Capability]:
         },
         {
             "id": "api2.Fileman.fileop",
-            "title": "Mover arquivo ou diretório para a lixeira",
+            "title": "Copiar, mover ou enviar para a lixeira",
             "description": (
-                "Move um arquivo ou diretório de public_html para a lixeira da conta, de onde "
-                "pode ser recuperado. Só a operação trash é aceita; o próprio public_html não "
-                "pode ser movido. Exige a frase de confirmação."
+                "Opera sobre um arquivo ou diretório dentro de public_html: trash envia para a "
+                "lixeira da conta (recuperável); copy e move exigem destfiles, também dentro de "
+                "public_html, e não aceitam destino dentro da própria origem. O próprio "
+                "public_html não pode ser origem. Só essas três operações são aceitas; exige a "
+                "frase de confirmação."
             ),
             "schema": _schema(
-                {"op": {"type": "string", "enum": ["trash"]}, "sourcefiles": string},
+                {
+                    "op": {"type": "string", "enum": ["trash", "copy", "move"]},
+                    "sourcefiles": string,
+                    "destfiles": string,
+                },
                 ["op", "sourcefiles"],
             ),
-            "examples": [{"op": "trash", "sourcefiles": "public_html/old-assets"}],
+            "examples": [
+                {"op": "trash", "sourcefiles": "public_html/old-assets"},
+                {"op": "copy", "sourcefiles": "public_html/a", "destfiles": "public_html/b"},
+                {"op": "move", "sourcefiles": "public_html/a", "destfiles": "public_html/b"},
+            ],
             "risk": Risk.DESTRUCTIVE,
             "role": Role.ADMIN,
             "profile": "operator",
