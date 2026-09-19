@@ -63,10 +63,25 @@ DESTRUCTIVE = re.compile(
     re.IGNORECASE,
 )
 WRITE = re.compile(
-    r"(^|_)(add|create|set|unset|update|edit|change|enable|disable|ensure|install|upload|save|suspend|unsuspend|start|stop|generate|provision|assign|unassign|hold|release|rebuild|toggle)(_|$)"
+    r"(^|_)(add|create|set|unset|update|edit|change|enable|disable|ensure|install|upload|save|suspend|unsuspend|start|stop|generate|provision|assign|unassign|hold|release|rebuild|toggle|rename|import|activate|deactivate|park|unpark)(_|$)"
     r"|addpop|passwd|mkdir|save_file_content|suspendacct|unsuspendacct|createacct",
     re.IGNORECASE,
 )
+# Upstream WHM/UAPI names often glue the verb to its object (addsubdomain, killpkg,
+# resetzone, savemxs). The boundary-based patterns above miss those, so a verb at the
+# start of the function name is also treated as a mutation.
+DESTRUCTIVE_PREFIX = re.compile(
+    r"^(del(?!iver)|delete|remove|kill|terminate|destroy|drop|erase|unlink|revoke|restore|reset)",
+    re.IGNORECASE,
+)
+WRITE_PREFIX = re.compile(
+    r"^(add|create|set|unset|update|edit|change|enable|disable|ensure|install|upload|save"
+    r"|suspend|unsuspend|start|stop|generate|provision|assign|unassign|hold|release|rebuild"
+    r"|toggle|rename|import|activate|deactivate|park|unpark)",
+    re.IGNORECASE,
+)
+# Functions whose names start with a mutating verb but only read state.
+READ_OVERRIDES = frozenset({"installed_host", "installed_hosts"})
 PRIVILEGED = re.compile(
     r"password|passwd|token|ssh|shell|privilege|acl|session|sudo|root|remote_whm|accesshash|private.?key|mycnf",
     re.IGNORECASE,
@@ -135,11 +150,13 @@ def classify(operation: str) -> tuple[Risk, Role, str]:
     function = operation.rsplit(".", 1)[-1]
     if function in BLOCKED_FUNCTIONS or PRIVILEGED.search(operation):
         return Risk.PRIVILEGED, Role.ADMIN, "admin"
-    if DESTRUCTIVE.search(function):
+    if function in READ_OVERRIDES:
+        return Risk.READ, Role.VIEWER, "reader"
+    if DESTRUCTIVE.search(function) or DESTRUCTIVE_PREFIX.search(function):
         return Risk.DESTRUCTIVE, Role.ADMIN, "admin"
     if EXTERNAL_SIDE_EFFECT.search(function):
         return Risk.EXTERNAL_SIDE_EFFECT, Role.OPERATOR, "operator"
-    if WRITE.search(function):
+    if WRITE.search(function) or WRITE_PREFIX.search(function):
         return Risk.REVERSIBLE_WRITE, Role.OPERATOR, "operator"
     if SENSITIVE_READ.search(function):
         return Risk.SENSITIVE_READ, Role.ADMIN, "reader"
