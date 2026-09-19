@@ -218,7 +218,7 @@ class RedirectWorkflows:
             "src": record["src"],
             "type": record["kind"],
             "wildcard": bool(record["wildcard"]),
-            "www": "both",
+            "www": "without_www" if str(record.get("www")) == "0" else "both",
         }
         try:
             await self._add(account, request)
@@ -354,7 +354,21 @@ class RedirectWorkflows:
             and cls._same_destination(record["destination"], request["destination"])
             and record["kind"] == request["type"]
             and bool(record["wildcard"]) == request["wildcard"]
+            and cls._www_matches(record, request)
         )
+
+    @staticmethod
+    def _www_matches(record: dict[str, Any], request: dict[str, Any]) -> bool:
+        """Compare the www mode as far as the listing exposes it.
+
+        The listing reports matchwww 0 for "without_www" and 1 for both "both" and "with_www"
+        (observed on the live server), so those two cannot be told apart on readback.
+        """
+        try:
+            actual = int(record["www"])
+        except (KeyError, TypeError, ValueError):
+            return True
+        return actual == (0 if request["www"] == "without_www" else 1)
 
     @classmethod
     def _identical(cls, left: dict[str, Any], right: dict[str, Any]) -> bool:

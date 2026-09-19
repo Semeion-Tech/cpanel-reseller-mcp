@@ -82,6 +82,8 @@ class RedirectCPanel:
             "destination": arguments["redirect"],
             "targeturl": arguments["redirect"],
             "wildcard": arguments["redirect_wildcard"],
+            # Observed on the live server: 0 for without_www, 1 for both and with_www.
+            "matchwww": 0 if arguments["redirect_www"] == 1 else 1,
             "type": "temporary" if temporary else "permanent",
             "statuscode": "302" if temporary else "301",
         }
@@ -422,3 +424,44 @@ async def test_subdomain_label_must_be_a_single_hostname_label(harness, admin, l
             {"domain": label, "rootdomain": "example.com"},
         )
     assert error.value.code == "INVALID_ARGUMENTS"
+
+
+@pytest.mark.asyncio
+async def test_a_different_www_mode_is_not_a_noop() -> None:
+    existing = {**REAL_RECORD, "domain": "example.com", "urldomain": "example.com"}
+    same = {**ARGS, "destination": existing["destination"]}
+
+    both, _ = await _ensure(RedirectCPanel([existing]), same)
+    with_www, _ = await _ensure(RedirectCPanel([existing]), {**same, "www": "with_www"})
+    assert both["plan"]["operation"] == "noop"
+    # both and with_www read back identically, so they cannot be told apart.
+    assert with_www["plan"]["operation"] == "noop"
+
+    with pytest.raises(CPanelError) as error:
+        await _workflows(RedirectCPanel([existing])).prepare_ensure(
+            "acct", {**same, "www": "without_www"}
+        )
+    assert error.value.code == "REDIRECT_CONFLICT"
+
+
+@pytest.mark.asyncio
+async def test_without_www_is_created_verified_and_restored_as_without_www() -> None:
+    existing = {**REAL_RECORD, "domain": "example.com", "urldomain": "example.com", "matchwww": 0}
+    cpanel = RedirectCPanel([existing])
+    cpanel.fail_add_after_delete = True
+    workflows = _workflows(cpanel)
+    arguments = {**ARGS, "replace_existing": True}
+    before = await workflows.prepare_ensure("acct", arguments)
+    preparation = Preparation.model_construct(
+        account="acct", arguments=arguments, before_state=before
+    )
+
+    with pytest.raises(CPanelError):
+        await workflows.execute_ensure(preparation)
+
+    restored = [args for name, args in cpanel.calls if name == "add_redirect"][-1]
+    assert restored["redirect_www"] == 1
+
+    created, result = await _ensure(RedirectCPanel(), {**ARGS, "www": "without_www"})
+    assert created["plan"]["operation"] == "add"
+    assert result["verified"] is True
