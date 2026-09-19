@@ -241,3 +241,27 @@ async def test_api2_writes_are_posted_like_uapi_writes(settings) -> None:
 
     assert seen["method"] == "POST"
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_api2_delsubdomain_is_on_the_allowlist(settings) -> None:
+    seen: dict[str, object] = {}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        seen["params"] = dict(request.url.params)
+        seen["method"] = request.method
+        return httpx.Response(
+            200, json={"metadata": {"result": 1}, "data": {"cpanelresult": {"data": []}}}
+        )
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+    capability = _api2_capability("delsubdomain", Risk.DESTRUCTIVE).model_copy(
+        update={"module": "SubDomain"}
+    )
+    await client.call(capability, "acctalpha", {"domain": "app_example.com"})
+
+    assert seen["method"] == "POST"
+    assert seen["params"]["cpanel_jsonapi_module"] == "SubDomain"
+    assert seen["params"]["cpanel_jsonapi_func"] == "delsubdomain"
+    assert seen["params"]["domain"] == "app_example.com"
+    await client.close()

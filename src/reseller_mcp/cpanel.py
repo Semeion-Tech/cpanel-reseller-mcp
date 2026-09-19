@@ -94,6 +94,7 @@ API2_ALLOWED: frozenset[tuple[str, str]] = frozenset(
         ("Fileman", "listfiles"),
         ("Fileman", "mkdir"),
         ("Fileman", "fileop"),
+        ("SubDomain", "delsubdomain"),
     }
 )
 

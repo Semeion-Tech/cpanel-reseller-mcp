@@ -157,6 +157,7 @@ ALIASES = {
     "workflow.redirect_ensure": "redirecionamento redirect domínio url apontar 301 302 criar",
     "workflow.redirect_remove": "redirecionamento redirect domínio remover excluir apagar",
     "uapi.SubDomain.addsubdomain": "subdomínio criar adicionar subdomain document root",
+    "workflow.subdomain_remove": "subdomínio remover excluir apagar subdomain delete",
     "uapi.Mime.list_redirects": "redirecionamento redirect htaccess 301 302 domínio url listar",
     "uapi.DomainInfo.domains_data": "domínios document root docroot subdomínios addon hospedagem",
     "uapi.Email.list_forwarders": "email encaminhadores redirecionamentos",
@@ -790,6 +791,19 @@ def curated_capabilities() -> list[Capability]:
                 ["domain", "destination"],
             ),
             "examples": [{"domain": "example.com", "destination": "https://www.example.org/"}],
+        },
+        {
+            "id": "workflow.subdomain_remove",
+            "title": "Remover subdomínio",
+            "description": (
+                "Remove um subdomínio da conta (por exemplo app.example.com). Só aceita um "
+                "domínio listado como subdomínio da própria conta; o domínio principal, os "
+                "adicionais e os estacionados são recusados. O document root não é apagado e "
+                "é informado no resultado, para ser movido para a lixeira à parte. Exige a "
+                "frase de confirmação."
+            ),
+            "schema": _schema({"domain": string}, ["domain"]),
+            "examples": [{"domain": "app.example.com"}],
         },
         {
             "id": "uapi.SubDomain.addsubdomain",
