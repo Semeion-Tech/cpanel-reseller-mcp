@@ -34,6 +34,7 @@ from .normalizer import normalize_result
 from .observability import OperationMetrics
 from .policy import PolicyEngine, PolicyError
 from .redirect_workflows import RedirectWorkflows
+from .subdomain_workflows import SubdomainWorkflows
 
 
 class HarnessError(RuntimeError):
@@ -75,6 +76,7 @@ class Harness:
         self.database = DatabaseWorkflows(self)
         self.dns = DNSWorkflows(self)
         self.redirects = RedirectWorkflows(self)
+        self.subdomains = SubdomainWorkflows(self)
         self._workflow_query_hooks["database.query_readonly"] = self.database.query_readonly
         self._workflow_prepare_hooks["database.transaction_execute"] = (
             self.database.prepare_transaction
@@ -98,6 +100,8 @@ class Harness:
         self._workflow_execute_hooks["workflow.redirect_ensure"] = self.redirects.execute_ensure
         self._workflow_prepare_hooks["workflow.redirect_remove"] = self.redirects.prepare_remove
         self._workflow_execute_hooks["workflow.redirect_remove"] = self.redirects.execute_remove
+        self._workflow_prepare_hooks["workflow.subdomain_remove"] = self.subdomains.prepare_remove
+        self._workflow_execute_hooks["workflow.subdomain_remove"] = self.subdomains.execute_remove
         for record_type in DNSWorkflows.ENSURE_TYPES:
             capability_id = f"workflow.dns_{record_type.lower()}_ensure"
             self._workflow_prepare_hooks[capability_id] = self.dns.prepare_hook(record_type)
