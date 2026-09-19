@@ -164,6 +164,13 @@ ALIASES = {
     "uapi.LangPHP.php_get_vhost_versions": "php versão virtual host document root",
     "uapi.SSL.list_ssl_items": "ssl certificados validade tls https",
     "uapi.SSL.can_ssl_redirect": "ssl https redirecionamento seguro",
+    "uapi.SSL.installed_hosts": "ssl certificado instalado sites domínios validade https",
+    "uapi.SSL.list_certs": "ssl certificados listar validade emissor expira",
+    "uapi.SSL.get_autossl_problems": "autossl problemas falha certificado renovação",
+    "uapi.SSL.get_autossl_excluded_domains": "autossl domínios excluídos exceção",
+    "uapi.SSL.get_autossl_pending_queue": "autossl fila pendente aguardando",
+    "uapi.SSL.is_autossl_check_in_progress": "autossl verificação andamento executando",
+    "uapi.WebVhosts.list_ssl_capable_domains": "ssl domínios aptos certificado virtual host",
     "uapi.Bandwidth.query": "banda tráfego consumo conta domínio",
     "database.query_readonly": "banco dados mysql consulta select leitura",
     "database.transaction_execute": "banco dados mysql escrever transacao update delete insert",
@@ -885,6 +892,60 @@ def curated_capabilities() -> list[Capability]:
             ),
             "examples": [{"domains": "example.com", "item": "crt"}],
             "required_features": ["sslmanager"],
+        },
+        {
+            "id": "uapi.SSL.installed_hosts",
+            "title": "Certificados instalados por site",
+            "description": (
+                "Lista os sites da conta, seus domínios e as informações do certificado "
+                "instalado em cada um. Não devolve chaves privadas."
+            ),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.SSL.list_certs",
+            "title": "Listar certificados da conta",
+            "description": (
+                "Lista os certificados SSL da conta com nome comum, emissor, validade e "
+                "domínios alternativos."
+            ),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.SSL.get_autossl_problems",
+            "title": "Problemas do AutoSSL",
+            "description": ("Lista os domínios da conta com problemas no AutoSSL."),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.SSL.get_autossl_excluded_domains",
+            "title": "Domínios excluídos do AutoSSL",
+            "description": ("Lista os domínios da conta excluídos do AutoSSL."),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.SSL.get_autossl_pending_queue",
+            "title": "Fila pendente do AutoSSL",
+            "description": ("Lista os domínios da conta que aguardam na fila do AutoSSL."),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.SSL.is_autossl_check_in_progress",
+            "title": "Verificação do AutoSSL em andamento",
+            "description": ("Informa se há uma verificação do AutoSSL em andamento para a conta."),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.SSL.is_sni_supported",
+            "title": "Servidor suporta SNI",
+            "description": ("Informa se o servidor da conta suporta SNI para certificados."),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.WebVhosts.list_ssl_capable_domains",
+            "title": "Domínios aptos a SSL",
+            "description": ("Lista os domínios da conta que podem receber certificado SSL."),
+            "schema": _schema(),
         },
         {
             "id": "uapi.SSL.can_ssl_redirect",
