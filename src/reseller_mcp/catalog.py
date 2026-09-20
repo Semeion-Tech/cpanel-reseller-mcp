@@ -919,10 +919,24 @@ def curated_capabilities() -> list[Capability]:
         {
             "id": "uapi.Fileman.save_file_content",
             "title": "Salvar arquivo",
-            "description": "Grava conteúdo em um arquivo dentro da conta cPanel.",
-            "schema": _schema(
-                {"dir": string, "file": string, "content": string}, ["dir", "file", "content"]
+            "description": (
+                "Grava um arquivo de texto dentro de public_html (dir relativo ao home, file um "
+                "nome simples, até 8192 caracteres; arquivos maiores vão por Git). Arquivos "
+                "com segredos (.env, wp-config.php, chaves) são recusados. Gravar um arquivo "
+                "que o servidor executa ou obedece (.php, .htaccess, .user.ini, scripts) exige "
+                "a frase de confirmação. Confirma pelo conteúdo lido de volta."
             ),
+            "schema": _schema(
+                {
+                    "dir": string,
+                    "file": string,
+                    "content": {"type": "string", "minLength": 1, "maxLength": 8192},
+                },
+                ["dir", "file", "content"],
+            ),
+            "examples": [
+                {"dir": "public_html", "file": "robots.txt", "content": "User-agent: *\nAllow: /"}
+            ],
         },
         {
             "id": "uapi.Backup.list_backups",

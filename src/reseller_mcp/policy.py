@@ -14,6 +14,19 @@ class PolicyError(PermissionError):
         self.code = code
 
 
+# Files that hold secrets: never written through the MCP, so a secret cannot travel through it.
+SECRET_FILE = re.compile(
+    r"^(\.env(\..*)?|\.my\.cnf|wp-config\.php|configuration\.php|id_rsa|id_ed25519|\.htpasswd"
+    r"|.*\.(pem|key|p12|pfx))$",
+    re.IGNORECASE,
+)
+# Files the web server or a shell will execute or obey. Writing one needs the confirmation phrase.
+EXECUTABLE_FILE = re.compile(
+    r"^(.*\.(php\d?|phtml|phar|pl|py|cgi|sh|rb|asp|aspx|jsp)|\.htaccess|\.user\.ini|php\.ini)$",
+    re.IGNORECASE,
+)
+
+
 class PolicyEngine:
     def __init__(
         self,
@@ -90,6 +103,8 @@ class PolicyEngine:
                     "SENSITIVE_TARGET_BLOCKED",
                 )
 
+        if capability.id == "uapi.Fileman.save_file_content":
+            self._check_save_file(arguments)
         if capability.id == "api2.Fileman.listfiles":
             self._check_home_path(str(arguments["dir"]))
         if capability.id == "api2.Fileman.mkdir":
@@ -127,6 +142,25 @@ class PolicyEngine:
             raise PolicyError(
                 "the path must be relative to the account home and outside protected directories",
                 "PATH_OUTSIDE_ALLOWED_ROOT",
+            )
+
+    @classmethod
+    def _check_save_file(cls, arguments: dict[str, Any]) -> None:
+        """A file write: inside public_html, one plain file name, never a secret-bearing file."""
+        cls._check_write_path(str(arguments["dir"]), allow_root=True)
+        name = str(arguments["file"]).strip()
+        if (
+            not name
+            or name in {".", ".."}
+            or "/" in name
+            or "\\" in name
+            or "\x00" in name
+            or len(name) > 255
+        ):
+            raise PolicyError("file must be a plain file name", "PATH_OUTSIDE_ALLOWED_ROOT")
+        if SECRET_FILE.match(name):
+            raise PolicyError(
+                "writing files that hold secrets is disabled by policy", "SENSITIVE_TARGET_BLOCKED"
             )
 
     @classmethod
@@ -181,12 +215,17 @@ class PolicyEngine:
             )
 
     @staticmethod
-    def requires_confirmation(capability: Capability) -> bool:
-        return capability.risk in {
-            Risk.EXTERNAL_SIDE_EFFECT,
-            Risk.DESTRUCTIVE,
-            Risk.PRIVILEGED,
-        }
+    def requires_confirmation(
+        capability: Capability, arguments: dict[str, Any] | None = None
+    ) -> bool:
+        if capability.risk in {Risk.EXTERNAL_SIDE_EFFECT, Risk.DESTRUCTIVE, Risk.PRIVILEGED}:
+            return True
+        # Writing a file the server executes or obeys is a code change, not a content edit.
+        return bool(
+            capability.id == "uapi.Fileman.save_file_content"
+            and arguments
+            and EXECUTABLE_FILE.match(str(arguments.get("file", "")).strip())
+        )
 
     @staticmethod
     def assert_read(capability: Capability) -> None:
