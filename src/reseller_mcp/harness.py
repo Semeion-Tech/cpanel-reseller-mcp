@@ -317,7 +317,7 @@ class Harness:
         preparation_id = str(uuid.uuid4())
         idempotency_key = idempotency_key or secrets.token_urlsafe(18)
         phrase = None
-        if self.policy.requires_confirmation(capability):
+        if self.policy.requires_confirmation(capability, arguments):
             target = account or arguments.get("user") or arguments.get("domain") or "reseller"
             phrase = f"CONFIRM {capability.function} {target}"
         now = datetime.now(UTC)
@@ -973,9 +973,35 @@ class Harness:
             full_name = f"{arguments.get('domain', '')}.{arguments.get('rootdomain', '')}"
             return full_name.lower() in serialized
         if capability.id == "uapi.Fileman.save_file_content":
-            expected_content = str(arguments.get("content", "")).lower()
-            return expected_content in serialized or expected_content == str(after).lower()
+            actual = Harness._find_content(after)
+            if actual is None:
+                return False
+            return Harness._normalize_text(actual) == Harness._normalize_text(
+                str(arguments.get("content", ""))
+            )
         return True
+
+    @staticmethod
+    def _normalize_text(value: str) -> str:
+        return value.replace("\r\n", "\n").rstrip("\n")
+
+    @staticmethod
+    def _find_content(value: Any) -> str | None:
+        """The file content wherever get_file_content nests it."""
+        if isinstance(value, dict):
+            content = value.get("content")
+            if isinstance(content, str):
+                return content
+            for item in value.values():
+                found = Harness._find_content(item)
+                if found is not None:
+                    return found
+        elif isinstance(value, list):
+            for item in value:
+                found = Harness._find_content(item)
+                if found is not None:
+                    return found
+        return None
 
     @staticmethod
     def _coerce_int(value: Any) -> int | None:
