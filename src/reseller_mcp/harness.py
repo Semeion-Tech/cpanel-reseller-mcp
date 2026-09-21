@@ -19,6 +19,7 @@ from .cpanel import CPanelClient, CPanelError
 from .database_workflows import DatabaseWorkflows
 from .db import Database
 from .dns_workflows import DNSWorkflows
+from .git_workflows import GitWorkflows
 from .models import (
     ApiFamily,
     Capability,
@@ -77,6 +78,7 @@ class Harness:
         self.dns = DNSWorkflows(self)
         self.redirects = RedirectWorkflows(self)
         self.subdomains = SubdomainWorkflows(self)
+        self.git = GitWorkflows(self)
         self._workflow_query_hooks["database.query_readonly"] = self.database.query_readonly
         self._workflow_prepare_hooks["database.transaction_execute"] = (
             self.database.prepare_transaction
@@ -102,6 +104,8 @@ class Harness:
         self._workflow_execute_hooks["workflow.redirect_remove"] = self.redirects.execute_remove
         self._workflow_prepare_hooks["workflow.subdomain_remove"] = self.subdomains.prepare_remove
         self._workflow_execute_hooks["workflow.subdomain_remove"] = self.subdomains.execute_remove
+        self._workflow_prepare_hooks["workflow.git_clone"] = self.git.prepare_clone
+        self._workflow_execute_hooks["workflow.git_clone"] = self.git.execute_clone
         for record_type in DNSWorkflows.ENSURE_TYPES:
             capability_id = f"workflow.dns_{record_type.lower()}_ensure"
             self._workflow_prepare_hooks[capability_id] = self.dns.prepare_hook(record_type)
