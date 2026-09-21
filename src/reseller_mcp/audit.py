@@ -16,6 +16,26 @@ SENSITIVE_KEY = re.compile(
     re.IGNORECASE,
 )
 PRIVATE_KEY_PEM = re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----", re.IGNORECASE)
+# A user or token embedded in a URL: any user info on http(s), and user:password on ssh or git.
+_HTTP_USERINFO = re.compile(r"\b(https?)://[^/\s@]+@", re.IGNORECASE)
+_SSH_USERINFO = re.compile(r"\b(ssh|git)://[^/\s@:]+:[^/\s@]*@", re.IGNORECASE)
+
+
+def scrub_url_userinfo(text: str) -> str:
+    """Mask a user, password or token embedded in a URL; a plain ssh user such as git stays."""
+    text = _HTTP_USERINFO.sub(r"\1://[REDACTED]@", text)
+    return _SSH_USERINFO.sub(r"\1://[REDACTED]@", text)
+
+
+def scrub_urls(value: Any) -> Any:
+    """scrub_url_userinfo over every string of a nested result."""
+    if isinstance(value, dict):
+        return {key: scrub_urls(item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [scrub_urls(item) for item in value]
+    if isinstance(value, str):
+        return scrub_url_userinfo(value)
+    return value
 
 
 def redact(value: Any) -> Any:
@@ -29,8 +49,10 @@ def redact(value: Any) -> Any:
     if isinstance(value, str) and PRIVATE_KEY_PEM.search(value):
         # A private key must never reach the audit log, whatever the field is called.
         return "[REDACTED]"
-    if isinstance(value, str) and len(value) > 4096:
-        return value[:4096] + "...[TRUNCATED]"
+    if isinstance(value, str):
+        value = scrub_url_userinfo(value)
+        if len(value) > 4096:
+            return value[:4096] + "...[TRUNCATED]"
     return value
 
 
