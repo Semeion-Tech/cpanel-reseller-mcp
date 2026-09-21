@@ -68,6 +68,7 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
     "database.query_readonly": (Risk.SENSITIVE_READ, Role.OPERATOR, "operator"),
     "database.transaction_execute": (Risk.DESTRUCTIVE, Role.OPERATOR, "operator"),
     "workflow.database_migration_apply": (Risk.DESTRUCTIVE, Role.ADMIN, "admin"),
+    "workflow.git_clone": (Risk.EXTERNAL_SIDE_EFFECT, Role.OPERATOR, "operator"),
 }
 
 DESTRUCTIVE = re.compile(
@@ -153,6 +154,7 @@ ALIASES = {
     "api2.Fileman.listfiles": "arquivos diretórios pastas listar api2 home public_html",
     "api2.Fileman.mkdir": "criar diretório pasta mkdir api2 public_html",
     "uapi.VersionControl.retrieve": "git repositório repositórios branch remoto clone listar",
+    "workflow.git_clone": "git clonar clone repositório github publicar código deploy",
     "uapi.VersionControlDeployment.retrieve": "git deploy implantação estado status cpanel.yml",
     "api2.Fileman.fileop": "apagar excluir remover lixeira mover copiar arquivo diretório trash",
     "uapi.Email.list_mxs": "email mx roteamento servidor",
@@ -806,6 +808,30 @@ def curated_capabilities() -> list[Capability]:
             ),
             "schema": _schema({"domain": string}, ["domain"]),
             "examples": [{"domain": "app.example.com"}],
+        },
+        {
+            "id": "workflow.git_clone",
+            "title": "Clonar repositório Git do GitHub",
+            "description": (
+                "Clona um repositório do GitHub para ~/repositories/<name> da conta. Só aceita "
+                "remotes dos owners permitidos (Semeion-Tech, LucioRibeiro-IHC e "
+                "OMC-Media-DRUM-DEV) e nunca com usuário, senha ou token na URL: repositório "
+                "privado é clonado por SSH com a chave que já está na conta, que este serviço "
+                "não lê nem grava. Repetir o mesmo clone é um no-op. Exige a frase de "
+                "confirmação."
+            ),
+            "schema": _schema(
+                {
+                    "url": string,
+                    "name": {"type": "string", "minLength": 1, "maxLength": 64},
+                    "branch": {"type": "string", "minLength": 1, "maxLength": 100},
+                },
+                ["url"],
+            ),
+            "examples": [
+                {"url": "https://github.com/Semeion-Tech/site.git"},
+                {"url": "git@github.com:OMC-Media-DRUM-DEV/site.git", "branch": "main"},
+            ],
         },
         {
             "id": "uapi.SubDomain.addsubdomain",
