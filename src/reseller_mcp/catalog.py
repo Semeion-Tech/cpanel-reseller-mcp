@@ -152,6 +152,8 @@ ALIASES = {
     "uapi.Fileman.list_files": "arquivos diretórios inventário listar",
     "api2.Fileman.listfiles": "arquivos diretórios pastas listar api2 home public_html",
     "api2.Fileman.mkdir": "criar diretório pasta mkdir api2 public_html",
+    "uapi.VersionControl.retrieve": "git repositório repositórios branch remoto clone listar",
+    "uapi.VersionControlDeployment.retrieve": "git deploy implantação estado status cpanel.yml",
     "api2.Fileman.fileop": "apagar excluir remover lixeira mover copiar arquivo diretório trash",
     "uapi.Email.list_mxs": "email mx roteamento servidor",
     "workflow.redirect_ensure": "redirecionamento redirect domínio url apontar 301 302 criar",
@@ -900,6 +902,25 @@ def curated_capabilities() -> list[Capability]:
             "risk": Risk.DESTRUCTIVE,
             "role": Role.ADMIN,
             "profile": "operator",
+        },
+        {
+            "id": "uapi.VersionControl.retrieve",
+            "title": "Listar repositórios Git",
+            "description": (
+                "Lista os repositórios Git gerenciados pelo cPanel na conta, com a raiz, o "
+                "branch e a URL do remoto. Usuário, senha ou token embutidos na URL são "
+                "mascarados."
+            ),
+            "schema": _schema(),
+        },
+        {
+            "id": "uapi.VersionControlDeployment.retrieve",
+            "title": "Estado dos deploys Git",
+            "description": (
+                "Lista o estado dos deploys dos repositórios Git da conta. Só existe para "
+                "repositórios com .cpanel.yml versionado, ao menos um branch e árvore limpa."
+            ),
+            "schema": _schema(),
         },
         {
             "id": "uapi.Fileman.list_files",

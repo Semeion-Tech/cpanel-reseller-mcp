@@ -12,7 +12,7 @@ from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .account_workflows import AccountWorkflows
-from .audit import AuditLog
+from .audit import AuditLog, scrub_urls
 from .catalog import ALIASES
 from .config import Settings
 from .cpanel import CPanelClient, CPanelError
@@ -251,6 +251,8 @@ class Harness:
             data = self._filter_scoped_result(
                 principal, capability, data, account=account, arguments=arguments
             )
+            # A remote URL can carry a user or token; the model and the audit never see it.
+            data = scrub_urls(data)
             normalized_data = normalize_result(capability.id, data, account)
             audit_id = self.audit.append(
                 principal=principal,
