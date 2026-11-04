@@ -131,6 +131,20 @@ CREATE TABLE IF NOT EXISTS db_migrations (
   status TEXT NOT NULL,
   PRIMARY KEY(account, database_name, migration_id)
 );
+CREATE TABLE IF NOT EXISTS image_staging (
+  id TEXT PRIMARY KEY,
+  user_id TEXT NOT NULL,
+  name TEXT NOT NULL,
+  format TEXT NOT NULL,
+  mime TEXT NOT NULL,
+  width INTEGER NOT NULL,
+  height INTEGER NOT NULL,
+  size INTEGER NOT NULL,
+  sha256 TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  expires_at TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS image_staging_expiry_idx ON image_staging(expires_at);
 """
 
 
@@ -573,6 +587,31 @@ class Database:
                 "SELECT * FROM mysql_ephemeral_grants WHERE expires_at<?", (now,)
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def insert_staged_image(self, row: dict[str, Any]) -> None:
+        with self.connect() as conn:
+            conn.execute(
+                """INSERT INTO image_staging
+                   (id,user_id,name,format,mime,width,height,size,sha256,created_at,expires_at)
+                   VALUES(:id,:user_id,:name,:format,:mime,:width,:height,:size,:sha256,
+                          :created_at,:expires_at)""",
+                row,
+            )
+
+    def get_staged_image(self, staging_id: str) -> dict[str, Any] | None:
+        with self.connect() as conn:
+            row = conn.execute("SELECT * FROM image_staging WHERE id=?", (staging_id,)).fetchone()
+        return dict(row) if row else None
+
+    def delete_staged_image(self, staging_id: str) -> None:
+        with self.connect() as conn:
+            conn.execute("DELETE FROM image_staging WHERE id=?", (staging_id,))
+
+    def list_expired_staged_images(self) -> list[str]:
+        now = datetime.now(UTC).isoformat()
+        with self.connect() as conn:
+            rows = conn.execute("SELECT id FROM image_staging WHERE expires_at<?", (now,))
+            return [str(row["id"]) for row in rows.fetchall()]
 
     def save_backup(self, account: str, database_name: str, rows: list[dict[str, Any]]) -> str:
         backup_id = str(uuid.uuid4())
