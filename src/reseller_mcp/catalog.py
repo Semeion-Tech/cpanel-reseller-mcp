@@ -69,6 +69,7 @@ EXPLICIT_RISKS: dict[str, tuple[Risk, Role, str]] = {
     "database.transaction_execute": (Risk.DESTRUCTIVE, Role.OPERATOR, "operator"),
     "workflow.database_migration_apply": (Risk.DESTRUCTIVE, Role.ADMIN, "admin"),
     "workflow.git_clone": (Risk.EXTERNAL_SIDE_EFFECT, Role.OPERATOR, "operator"),
+    "workflow.images_publish": (Risk.REVERSIBLE_WRITE, Role.OPERATOR, "operator"),
 }
 
 DESTRUCTIVE = re.compile(
@@ -155,6 +156,10 @@ ALIASES = {
     "api2.Fileman.mkdir": "criar diretório pasta mkdir api2 public_html",
     "uapi.VersionControl.retrieve": "git repositório repositórios branch remoto clone listar",
     "workflow.git_clone": "git clonar clone repositório github publicar código deploy",
+    "workflow.images_publish": (
+        "imagem imagens publicar upload enviar subir arquivo png jpg jpeg webp gif avif "
+        "e-mail assets public_html"
+    ),
     "uapi.VersionControlDeployment.retrieve": "git deploy implantação estado status cpanel.yml",
     "api2.Fileman.fileop": "apagar excluir remover lixeira mover copiar arquivo diretório trash",
     "uapi.Email.list_mxs": "email mx roteamento servidor",
@@ -808,6 +813,48 @@ def curated_capabilities() -> list[Capability]:
             ),
             "schema": _schema({"domain": string}, ["domain"]),
             "examples": [{"domain": "app.example.com"}],
+        },
+        {
+            "id": "workflow.images_publish",
+            "title": "Publicar imagens em public_html",
+            "description": (
+                "Publica imagens já enviadas ao staging (com o comando reseller-mcp-upload, que "
+                "devolve os staging_id) em um diretório existente dentro de public_html. Aceita "
+                "até 20 imagens PNG, JPEG, WebP, GIF ou AVIF por ação; nunca sobrescreve um "
+                "arquivo existente (use um nome novo, por exemplo com sufixo -02). Cada imagem é "
+                "verificada pela listagem e, quando o diretório pertence a um domínio, pelo "
+                "SHA-256 da URL pública. Nunca envie o conteúdo da imagem em argumentos."
+            ),
+            "schema": _schema(
+                {
+                    "dir": string,
+                    "items": {
+                        "type": "array",
+                        "minItems": 1,
+                        "maxItems": 20,
+                        "items": _schema(
+                            {
+                                "staging_id": {"type": "string", "pattern": "^[0-9a-f]{32}$"},
+                                "name": {"type": "string", "minLength": 5, "maxLength": 104},
+                            },
+                            ["staging_id"],
+                        ),
+                    },
+                },
+                ["dir", "items"],
+            ),
+            "examples": [
+                {
+                    "dir": "public_html/mail-campanha/images",
+                    "items": [
+                        {"staging_id": "0123456789abcdef0123456789abcdef"},
+                        {
+                            "staging_id": "fedcba9876543210fedcba9876543210",
+                            "name": "hero-02.jpg",
+                        },
+                    ],
+                }
+            ],
         },
         {
             "id": "workflow.git_clone",

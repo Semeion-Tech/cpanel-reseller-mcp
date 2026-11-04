@@ -111,6 +111,8 @@ class PolicyEngine:
             self._check_write_path(str(arguments["path"]), allow_root=True)
         if capability.id == "api2.Fileman.fileop":
             self._check_fileop(arguments)
+        if capability.id == "workflow.images_publish":
+            self._check_write_path(str(arguments["dir"]), allow_root=True)
         if capability.id == "uapi.SubDomain.addsubdomain" and "dir" in arguments:
             self._check_subdomain_dir(str(arguments["dir"]))
 
