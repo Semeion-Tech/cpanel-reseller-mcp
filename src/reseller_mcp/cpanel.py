@@ -260,6 +260,110 @@ class CPanelClient:
             return result
         return payload.get("data", payload)
 
+    async def upload_files(
+        self,
+        account: str,
+        directory: str,
+        files: list[tuple[str, bytes, str]],
+        *,
+        profile: str = "operator",
+    ) -> dict[str, Any]:
+        """Upload files into an account directory through a cPanel user session.
+
+        The WHM `uapi_cpanel` proxy drops multipart bodies, so Fileman::upload_files is only
+        reachable on the cPanel service itself. WHM `create_user_session` (ACL
+        create-user-session) yields a one-time login URL; following it sets the session cookie,
+        and the upload goes to /cpsess<id>/execute/Fileman/upload_files. Never retried: an
+        upload is not idempotent. The session URL is a credential and never leaves this method.
+        """
+        self._check_circuit()
+        if not files:
+            raise CPanelError("no files to upload", code="UPLOAD_FAILED", category="validation")
+        token = self.settings.upstream_token(profile)
+        headers = {"Authorization": f"whm {self.settings.cpanel_reseller}:{token}"}
+        response = await self._client.get(
+            "/json-api/create_user_session",
+            headers=headers,
+            params={"api.version": 1, "user": account, "service": "cpaneld"},
+        )
+        try:
+            payload = response.json()
+        except ValueError as exc:
+            raise CPanelError("cPanel returned invalid JSON", code="UPSTREAM_INVALID_JSON") from exc
+        metadata = payload.get("metadata") or {}
+        session_url = (payload.get("data") or {}).get("url")
+        if int(metadata.get("result", 0) or 0) != 1 or not isinstance(session_url, str):
+            raise CPanelError(
+                "cPanel refused to open a user session for the upload",
+                code="UPLOAD_SESSION_DENIED",
+                category="policy",
+                details={"reason": metadata.get("reason")},
+                hint=("The reseller token of this profile needs the WHM ACL create-user-session."),
+            )
+        parts = httpx.URL(session_url)
+        segments = [segment for segment in parts.path.split("/") if segment]
+        if not segments or not segments[0].startswith("cpsess"):
+            raise CPanelError(
+                "cPanel returned an unexpected session URL", code="UPLOAD_SESSION_DENIED"
+            )
+        origin = f"{parts.scheme}://{parts.host}" + (f":{parts.port}" if parts.port else "")
+        try:
+            async with httpx.AsyncClient(
+                base_url=origin,
+                verify=self.settings.cpanel_verify_tls,
+                timeout=max(self.settings.cpanel_timeout_seconds, 120.0),
+                transport=self._transport,
+                follow_redirects=True,
+            ) as session:
+                await session.get(parts.raw_path.decode("ascii"))
+                upload = await session.post(
+                    f"/{segments[0]}/execute/Fileman/upload_files",
+                    data={"dir": directory, "overwrite": "0"},
+                    files=[
+                        (f"file-{index}", (name, content, mime))
+                        for index, (name, content, mime) in enumerate(files, start=1)
+                    ],
+                )
+        except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError) as exc:
+            raise CPanelError(
+                "cPanel upload request failed",
+                code="UPSTREAM_NETWORK_ERROR",
+                details={"type": type(exc).__name__},
+            ) from None
+        if upload.status_code >= 400:
+            raise CPanelError(
+                "cPanel returned an HTTP error for the upload",
+                code="UPSTREAM_HTTP_ERROR",
+                details={"status": upload.status_code},
+            )
+        try:
+            body = upload.json()
+        except ValueError as exc:
+            raise CPanelError("cPanel returned invalid JSON", code="UPSTREAM_INVALID_JSON") from exc
+        data = body.get("data") if isinstance(body.get("data"), dict) else {}
+        uploads = [
+            {
+                "file": item.get("file"),
+                "size": item.get("size"),
+                "status": int(item.get("status", 0) or 0),
+                "reason": item.get("reason"),
+            }
+            for item in data.get("uploads") or []
+            if isinstance(item, dict)
+        ]
+        result = {
+            "succeeded": int(data.get("succeeded", 0) or 0),
+            "failed": int(data.get("failed", 0) or 0),
+            "uploads": uploads,
+        }
+        if int(body.get("status", 0) or 0) != 1 or result["failed"] or body.get("errors"):
+            raise CPanelError(
+                "cPanel did not accept every uploaded file",
+                code="UPLOAD_FAILED",
+                details={**result, "errors": body.get("errors")},
+            )
+        return result
+
     @staticmethod
     def _api2_result(payload: dict[str, Any]) -> Any:
         """Unwrap an API 2 response, wherever the WHM `cpanel` function nests it."""
