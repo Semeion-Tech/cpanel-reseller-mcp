@@ -44,6 +44,33 @@ Instale o pacote Python do projeto e configure:
 Em ambientes de equipe, substitua o valor literal por um secret manager ou variável injetada pelo
 runtime. O bridge usa `mcp-remote` e mantém o bearer fora dos argumentos do processo.
 
+## Envio de imagens (`reseller-mcp-upload`)
+
+Imagens nunca vão em argumentos de ferramenta. O binário segue por HTTP para o staging do servidor
+e o MCP só recebe os `staging_id`:
+
+1. `~/.local/share/integer-reseller-mcp/upload.sh <arquivos ou pasta>` lê o bearer do Keychain
+   (mesmo item do `run.sh`) e chama `reseller-mcp-upload`, que envia um multipart para
+   `POST /staging/images`. Exige papel `operator`; a saída é JSON com `items` (cada um com
+   `staging_id`, `name`, `format`, `size`, `sha256`) e `rejected`.
+2. `action_prepare` de `workflow.images_publish` com `dir` (dentro de `public_html`, já existente)
+   e `items: [{"staging_id": "...", "name": "opcional.png"}]`, e depois `action_execute`.
+
+Limites: PNG, JPEG, WebP, GIF ou AVIF; 10 MB por arquivo, 40 MB e 20 arquivos por lote; o staging
+expira em 1 hora e só é visível para quem enviou. Nunca há sobrescrita: um nome que já existe é
+recusado com `DESTINATION_EXISTS` (troque a imagem com um nome novo, por exemplo `-02`).
+
+Exemplo (peças de e-mail do m-dias):
+
+```sh
+~/.local/share/integer-reseller-mcp/upload.sh ~/Projetos/m-dias/mail-marketing/emails/static
+# action_prepare workflow.images_publish, conta promocaosaborque,
+#   {"dir": "public_html/mail-campanha/images", "items": [{"staging_id": "..."}]}
+```
+
+O `upload.sh` é igual ao `run.sh`, trocando a última linha por
+`exec <projeto>/.venv/bin/reseller-mcp-upload "$@"`.
+
 ## Emissão e revogação
 
 Na VPS Semeion:
@@ -72,8 +99,10 @@ A conexão ao WHM usa três tokens próprios (`RESELLER_MCP_CPANEL_READER_TOKEN`
 
 - **reader:** `acct-summary`, `basic-system-info`, `basic-whm-functions`, `cpanel-api`,
   `list-accts`, `list-pkgs`, `mailcheck`, `mysql-info`, `show-bandwidth`, `ssl-info`.
-- **operator:** ACLs do reader + `create-acct`, `create-dns`, `edit-dns`, `edit-mx`,
-  `manage-dns-records`, `ssl`, `suspend-acct`.
+- **operator:** ACLs do reader + `create-acct`, `create-dns`, `create-user-session`, `edit-dns`,
+  `edit-mx`, `manage-dns-records`, `ssl`, `suspend-acct`. `create-user-session` permite o upload
+  de imagens (`workflow.images_publish`): o proxy `uapi_cpanel` da WHM descarta corpo multipart,
+  então o envio passa por uma sessão de cPanel.
 - **admin:** herda operator, sem restrição adicional de ACL.
 
 Autenticação direta na WHM API usa o header `Authorization: whm <reseller>:<TOKEN>`. Ao criar um

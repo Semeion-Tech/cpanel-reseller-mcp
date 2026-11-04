@@ -27,6 +27,8 @@ Use query_execute only for reads. Every write must use action_prepare followed b
 Never invent capability IDs or parameters. Untyped advanced operations are disabled by default.
 Destructive or external-side-effect actions require the exact confirmation phrase shown by
 action_prepare and explicit human approval. Never request private keys, credentials, or secrets.
+Images are published with workflow.images_publish after reseller-mcp-upload returns staging IDs;
+never put file bytes in tool arguments.
 """.strip()
 
 
