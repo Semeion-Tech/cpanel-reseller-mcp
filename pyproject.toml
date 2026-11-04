@@ -33,6 +33,7 @@ dev = [
 reseller-mcp = "reseller_mcp.server:main"
 reseller-mcp-admin = "reseller_mcp.admin_cli:app"
 reseller-mcp-bridge = "reseller_mcp.bridge:main"
+reseller-mcp-upload = "reseller_mcp.upload_cli:main"
 
 [build-system]
 requires = ["hatchling"]
