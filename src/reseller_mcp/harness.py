@@ -20,6 +20,7 @@ from .database_workflows import DatabaseWorkflows
 from .db import Database
 from .dns_workflows import DNSWorkflows
 from .git_workflows import GitWorkflows
+from .image_staging import ImageStaging
 from .models import (
     ApiFamily,
     Capability,
@@ -79,6 +80,7 @@ class Harness:
         self.redirects = RedirectWorkflows(self)
         self.subdomains = SubdomainWorkflows(self)
         self.git = GitWorkflows(self)
+        self.image_staging = ImageStaging(db, settings.db_path.parent / "staging")
         self._workflow_query_hooks["database.query_readonly"] = self.database.query_readonly
         self._workflow_prepare_hooks["database.transaction_execute"] = (
             self.database.prepare_transaction
