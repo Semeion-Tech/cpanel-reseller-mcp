@@ -8,6 +8,10 @@ updates:
       time: "07:00"
       timezone: America/Sao_Paulo
     open-pull-requests-limit: 5
+    ignore:
+      # mcp 2.x muda a API do FastMCP; a migração é planejada à parte.
+      - dependency-name: mcp
+        update-types: ["version-update:semver-major"]
     groups:
       python-runtime:
         patterns:
@@ -15,8 +19,10 @@ updates:
           - httpx
           - jsonschema
           - mcp
+          - pillow
           - pydantic
           - pydantic-settings
+          - python-multipart
           - sqlglot
           - typer
           - uvicorn

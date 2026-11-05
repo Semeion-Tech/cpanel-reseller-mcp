@@ -49,6 +49,8 @@ asyncio_mode = "auto"
 [tool.ruff]
 line-length = 100
 target-version = "py312"
+# Planos em Markdown têm trechos de código soltos de propósito; o ruff 0.17 passou a formatá-los.
+extend-exclude = ["*.md"]
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
