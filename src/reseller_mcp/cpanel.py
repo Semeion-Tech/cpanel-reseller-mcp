@@ -279,13 +279,7 @@ class CPanelClient:
         self._check_circuit()
         if not files:
             raise CPanelError("no files to upload", code="UPLOAD_FAILED", category="validation")
-        token = self.settings.upstream_token(profile)
-        headers = {"Authorization": f"whm {self.settings.cpanel_reseller}:{token}"}
-        response = await self._client.get(
-            "/json-api/create_user_session",
-            headers=headers,
-            params={"api.version": 1, "user": account, "service": "cpaneld"},
-        )
+        response = await self._create_user_session(account, profile)
         try:
             payload = response.json()
         except ValueError as exc:
@@ -363,6 +357,43 @@ class CPanelClient:
                 details={**result, "errors": body.get("errors")},
             )
         return result
+
+    async def _create_user_session(self, account: str, profile: str) -> httpx.Response:
+        """Open the cPanel session on a one-shot connection, retrying once if it drops.
+
+        cpsrvd may close a pooled keep-alive connection right after a previous call
+        (RemoteProtocolError). No file has been sent at this point, so a second attempt is safe.
+        """
+        token = self.settings.upstream_token(profile)
+        headers = {
+            "Authorization": f"whm {self.settings.cpanel_reseller}:{token}",
+            "Connection": "close",
+        }
+        last_error: Exception | None = None
+        for attempt in range(2):
+            try:
+                async with httpx.AsyncClient(
+                    base_url=self.settings.cpanel_base_url,
+                    verify=self.settings.cpanel_verify_tls,
+                    timeout=self.settings.cpanel_timeout_seconds,
+                    transport=self._transport,
+                    limits=httpx.Limits(max_connections=1, max_keepalive_connections=0),
+                ) as client:
+                    return await client.get(
+                        "/json-api/create_user_session",
+                        headers=headers,
+                        params={"api.version": 1, "user": account, "service": "cpaneld"},
+                    )
+            except (httpx.TimeoutException, httpx.NetworkError, httpx.ProtocolError) as exc:
+                last_error = exc
+                if attempt == 0:
+                    await asyncio.sleep(0.25)
+        raise CPanelError(
+            "cPanel did not answer the upload session request",
+            code="UPSTREAM_NETWORK_ERROR",
+            details={"type": type(last_error).__name__ if last_error else "unknown"},
+            retryable=True,
+        ) from None
 
     @staticmethod
     def _api2_result(payload: dict[str, Any]) -> Any:
