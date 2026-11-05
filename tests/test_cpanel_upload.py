@@ -154,3 +154,42 @@ async def test_session_url_never_leaks_into_errors(settings) -> None:
     assert error.value.code == "UPSTREAM_NETWORK_ERROR"
     assert "cpsess" not in rendered and "session=" not in rendered
     await client.close()
+
+
+@pytest.mark.asyncio
+async def test_dropped_connection_while_opening_the_session_is_retried(settings) -> None:
+    """cpsrvd may close a keep-alive connection; no file was sent yet, so one retry is safe."""
+    server = Server(SESSION_OK, upload_ok(["a.png"]))
+    dropped = {"count": 0}
+
+    async def handler(request: httpx.Request) -> httpx.Response:
+        if request.url.path == "/json-api/create_user_session" and not dropped["count"]:
+            dropped["count"] += 1
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+        return await server(request)
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+
+    result = await client.upload_files("acctalpha", "public_html", [("a.png", b"x", "image/png")])
+
+    assert result["succeeded"] == 1
+    session_requests = [
+        request
+        for request in server.requests
+        if request.url.path == "/json-api/create_user_session"
+    ]
+    assert session_requests[0].headers["connection"] == "close"
+
+
+@pytest.mark.asyncio
+async def test_session_that_keeps_failing_becomes_a_network_error(settings) -> None:
+    async def handler(request: httpx.Request) -> httpx.Response:
+        raise httpx.RemoteProtocolError("Server disconnected without sending a response.")
+
+    client = CPanelClient(settings, transport=httpx.MockTransport(handler))
+
+    with pytest.raises(CPanelError) as error:
+        await client.upload_files("acctalpha", "public_html", [("a.png", b"x", "image/png")])
+
+    assert error.value.code == "UPSTREAM_NETWORK_ERROR"
+    assert error.value.retryable is True
