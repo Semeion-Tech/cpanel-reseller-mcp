@@ -8,9 +8,11 @@ dependencies = [
   "aiomysql>=0.2,<1",
   "httpx>=0.28,<1",
   "jsonschema>=4.23,<5",
-  "mcp[cli]==1.28.1",
+  "mcp[cli]==1.30.0",
+  "pillow>=13,<14",
   "pydantic>=2.10,<3",
   "pydantic-settings>=2.7,<3",
+  "python-multipart>=0.0.20,<1",
   "sqlglot>=30.13,<31",
   "typer>=0.15,<1",
   "uvicorn>=0.34,<1",
@@ -31,6 +33,7 @@ dev = [
 reseller-mcp = "reseller_mcp.server:main"
 reseller-mcp-admin = "reseller_mcp.admin_cli:app"
 reseller-mcp-bridge = "reseller_mcp.bridge:main"
+reseller-mcp-upload = "reseller_mcp.upload_cli:main"
 
 [build-system]
 requires = ["hatchling"]

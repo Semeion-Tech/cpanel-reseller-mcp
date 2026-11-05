@@ -64,6 +64,36 @@ e pós-validação. `workflow.database_migration_apply` acrescenta um ledger ver
 (`migration_id` + checksum do SQL): reaplicar com o mesmo conteúdo é no-op; conteúdo diferente é
 bloqueado.
 
+## Publicação de imagens
+
+`workflow.images_publish` (escrita reversível, papel `operator`) publica imagens já colocadas no
+staging por `POST /staging/images`. A rota autentica o bearer por conta própria (rotas
+customizadas não passam pelo verificador do MCP), aceita só POST, valida cada arquivo pelos bytes
+com Pillow e devolve `{"items": [...], "rejected": [{"name", "code", "message"}]}`; um arquivo
+rejeitado não derruba os demais. No nginx, só essa rota aceita corpo de até 50 MB, com o limite do
+ModSecurity elevado apenas nela.
+
+O prepare confere posse e validade de cada `staging_id`, nomes, extensão contra o formato real e a
+listagem do destino; a URL pública prevista vem do document root mais específico da conta. O
+execute lista o destino de novo, envia o lote por sessão de cPanel (`create_user_session` e depois
+`/execute/Fileman/upload_files` com `overwrite=0`) e verifica cada arquivo pela listagem e pelo
+SHA-256 da URL. `verified` só é verdadeiro com todos os arquivos conferidos. Remoção continua com
+`api2.Fileman.fileop` `trash`, que exige frase.
+
+| Código | Quando |
+|---|---|
+| `IMAGE_NAME_INVALID` | Nome fora de `[a-z0-9._-]` com extensão de imagem. |
+| `IMAGE_FORMAT_NOT_ALLOWED` | Bytes não decodificáveis ou formato fora de PNG/JPEG/WebP/GIF/AVIF. |
+| `IMAGE_EXTENSION_MISMATCH` | Extensão de outro formato. |
+| `IMAGE_TOO_LARGE` | Acima de 10 MB ou de 40 megapixels. |
+| `BATCH_TOO_LARGE` | Lote acima de 40 MB ou de 20 arquivos. |
+| `STAGING_NOT_FOUND` | ID inexistente, expirado ou de outro usuário. |
+| `DUPLICATE_NAME` | Nome repetido no lote. |
+| `DESTINATION_EXISTS` | Arquivo com o mesmo nome no destino (nunca sobrescreve). |
+| `DESTINATION_PARENT_MISSING` | Diretório de destino inexistente (crie com `api2.Fileman.mkdir`). |
+| `UPLOAD_SESSION_DENIED` | O perfil do upstream não tem a ACL `create-user-session`. |
+| `UPLOAD_FAILED` | O cPanel recusou um ou mais arquivos; o resultado lista cada um. |
+
 ## Schemas e normalização
 
 As operações curadas declaram argumentos obrigatórios e `additionalProperties: false`. Entre os

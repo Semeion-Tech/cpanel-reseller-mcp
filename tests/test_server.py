@@ -99,3 +99,15 @@ def test_tool_errors_keep_the_typed_code_of_cpanel_and_harness_errors() -> None:
         "PATH_OUTSIDE_ALLOWED_ROOT: bad path"
     )
     assert str(_tool_error(RuntimeError("boom"))) == "INTERNAL_ERROR: boom"
+
+
+def test_staging_route_is_registered_for_post_only(settings) -> None:
+    mcp, _ = create_server(settings)
+
+    routes = {
+        getattr(route, "path", None): getattr(route, "methods", None)
+        for route in mcp.streamable_http_app().routes
+    }
+
+    assert "POST" in routes["/staging/images"]
+    assert "GET" not in routes["/staging/images"]

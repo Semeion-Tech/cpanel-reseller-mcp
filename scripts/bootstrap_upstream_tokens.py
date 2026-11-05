@@ -44,13 +44,15 @@ READER_ACLS = {
 OPERATOR_ACLS = READER_ACLS | {
     "create-acct",
     "create-dns",
+    # Image uploads go through a cPanel user session (workflow.images_publish).
+    "create-user-session",
     "edit-dns",
     "edit-mx",
     "manage-dns-records",
     "ssl",
     "suspend-acct",
 }
-DENIED_ADMIN_ACLS = {"all", "create-user-session", "manage-api-tokens"}
+DENIED_ADMIN_ACLS = {"all", "manage-api-tokens"}
 
 
 def ssh(host: str, command: str, *, stdin: str | None = None) -> str:

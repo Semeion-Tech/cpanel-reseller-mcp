@@ -20,6 +20,8 @@ from .database_workflows import DatabaseWorkflows
 from .db import Database
 from .dns_workflows import DNSWorkflows
 from .git_workflows import GitWorkflows
+from .image_staging import ImageStaging
+from .image_workflows import PREPARING_USER, ImageWorkflows
 from .models import (
     ApiFamily,
     Capability,
@@ -79,6 +81,8 @@ class Harness:
         self.redirects = RedirectWorkflows(self)
         self.subdomains = SubdomainWorkflows(self)
         self.git = GitWorkflows(self)
+        self.image_staging = ImageStaging(db, settings.db_path.parent / "staging")
+        self.images = ImageWorkflows(self)
         self._workflow_query_hooks["database.query_readonly"] = self.database.query_readonly
         self._workflow_prepare_hooks["database.transaction_execute"] = (
             self.database.prepare_transaction
@@ -106,6 +110,8 @@ class Harness:
         self._workflow_execute_hooks["workflow.subdomain_remove"] = self.subdomains.execute_remove
         self._workflow_prepare_hooks["workflow.git_clone"] = self.git.prepare_clone
         self._workflow_execute_hooks["workflow.git_clone"] = self.git.execute_clone
+        self._workflow_prepare_hooks["workflow.images_publish"] = self.images.prepare_publish
+        self._workflow_execute_hooks["workflow.images_publish"] = self.images.execute_publish
         for record_type in DNSWorkflows.ENSURE_TYPES:
             capability_id = f"workflow.dns_{record_type.lower()}_ensure"
             self._workflow_prepare_hooks[capability_id] = self.dns.prepare_hook(record_type)
@@ -319,7 +325,11 @@ class Harness:
             self._audit_denied(principal, capability_id, account, arguments, exc)
             raise HarnessError(str(exc), exc.code) from exc
 
-        before_state = await self._snapshot(capability, account, arguments)
+        preparing = PREPARING_USER.set(principal.user_id)
+        try:
+            before_state = await self._snapshot(capability, account, arguments)
+        finally:
+            PREPARING_USER.reset(preparing)
         preparation_id = str(uuid.uuid4())
         idempotency_key = idempotency_key or secrets.token_urlsafe(18)
         phrase = None

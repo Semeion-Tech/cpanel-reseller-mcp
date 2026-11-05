@@ -17,6 +17,7 @@ from .cpanel import CPanelError
 from .harness import HarnessError
 from .models import ApiFamily, Risk
 from .runtime import ResellerTokenVerifier, Runtime, current_principal
+from .staging_route import staging_images_endpoint
 
 INSTRUCTIONS = """
 Control plane for a cPanel reseller. Prefer account_resolve, account_dossier, and
@@ -26,6 +27,8 @@ Use query_execute only for reads. Every write must use action_prepare followed b
 Never invent capability IDs or parameters. Untyped advanced operations are disabled by default.
 Destructive or external-side-effect actions require the exact confirmation phrase shown by
 action_prepare and explicit human approval. Never request private keys, credentials, or secrets.
+Images are published with workflow.images_publish after reseller-mcp-upload returns staging IDs;
+never put file bytes in tool arguments.
 """.strip()
 
 
@@ -67,6 +70,8 @@ def create_server(settings: Settings | None = None) -> tuple[FastMCP[Any], Runti
     @mcp.custom_route("/healthz", methods=["GET"])  # type: ignore[untyped-decorator]
     async def healthz(_: Request) -> JSONResponse:
         return JSONResponse({"status": "ok", "service": "cpanel-reseller-mcp"})
+
+    mcp.custom_route("/staging/images", methods=["POST"])(staging_images_endpoint(runtime))
 
     @mcp.tool(
         description="Return cPanel version, reseller privileges, and scoped account inventory.",
